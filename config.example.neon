@@ -1,0 +1,76 @@
+# config.example.neon
+extensions:
+  mediaS3: App\MediaS3\DI\MediaS3Extension
+
+mediaS3:
+  s3:
+    endpoint: 'https://eu.contabo.com'   # uprav dle Contabo
+    region: 'eu2'
+    bucket: 'my-bucket'
+    accessKey: %env.AWS_ACCESS_KEY_ID%
+    secretKey: %env.AWS_SECRET_ACCESS_KEY%
+    publicBaseUrl: 'https://cdn.domena.cz'   # tvoje CF doména
+    cacheSeconds: 31536000                   # 1 rok
+
+  rabbit:
+    host: 'rabbit'
+    port: 5672
+    user: 'guest'
+    pass: 'guest'
+    vhost: '/'
+    queue: 'media.process'
+    prefetch: 10
+    retryMax: 3
+    # optional: dlq: 'media.process.dlq'
+
+  http:
+    timeoutSeconds: 15
+    maxBytes: 15000000          # 15 MB limit pro stažení remote
+    userAgent: 'MediaS3Bot/1.0'
+
+  profiles:
+    product:
+      prefix: 'products'
+      keepOriginal: true
+      maxOriginalLongEdge: 3000
+      formats: [jpg, webp]
+      variants:
+        thumb:  { w: 320,  h: 320,  fit: cover }
+        medium: { w: 800,  h: 800,  fit: contain }
+        large:  { w: 1600, h: 1600, fit: contain }
+
+    blog:
+      prefix: 'blog'
+      keepOriginal: true
+      maxOriginalLongEdge: 2600
+      formats: [jpg, webp]
+      variants:
+        hero:  { w: 1920, h: 1080, fit: cover }
+        card:  { w: 800,  h: 450,  fit: cover }
+        thumb: { w: 320,  h: 180,  fit: cover }
+
+    gallery:
+      prefix: 'gallery'
+      keepOriginal: true
+      maxOriginalLongEdge: 3500
+      formats: [jpg, webp]
+      variants:
+        thumb: { w: 320,  h: 320, fit: cover }
+        view:  { w: 1400, h: 1000, fit: contain }
+        zoom:  { w: 2200, h: 1600, fit: contain }
+
+    carousel:
+      prefix: 'carousel'
+      keepOriginal: false
+      formats: [jpg, webp]
+      variants:
+        slide:  { w: 1920, h: 700, fit: cover }
+        mobile: { w: 900,  h: 900, fit: cover }
+
+    user:
+      prefix: 'user'
+      keepOriginal: false
+      formats: [jpg, webp]
+      variants:
+        avatar:  { w: 256, h: 256, fit: cover }
+        profile: { w: 800, h: 800, fit: contain }
