@@ -18,13 +18,7 @@ final class ImageProcessorGd
     /** @return array{w:int,h:int,type:int} */
     private function getSizeFromBytes(string $bytes): array
     {
-        $tmp = tempnam(sys_get_temp_dir(), 'mimg_');
-        if ($tmp === false) {
-            throw new \RuntimeException('tempnam failed');
-        }
-        file_put_contents($tmp, $bytes);
-        $info = getimagesize($tmp);
-        @unlink($tmp);
+        $info = getimagesizefromstring($bytes);
         if ($info === false) {
             throw new \RuntimeException('Unsupported image bytes');
         }

@@ -180,23 +180,48 @@ final class MediaManager
         // sha1 for dedupe info
         $sha1 = sha1($bytes);
 
+        // Collect all files to upload for batch async upload
+        $filesToUpload = [];
+
         // Original
+        $origKeyJpg = null;
+        $origKeyWebp = null;
+        $origW = 0;
+        $origH = 0;
+
         if ($profileDef->keepOriginal) {
             $orig = $this->images->renderOriginal($bytes, $profileDef->maxOriginalLongEdge, $qualityJpg, $qualityWebp);
 
             $origKeyJpg = $baseKey . '/original.jpg';
-            $this->storage->put($origKeyJpg, $orig['bodyJpg'], 'image/jpeg');
+            $filesToUpload[] = [
+                'key' => $origKeyJpg,
+                'body' => $orig['bodyJpg'],
+                'contentType' => 'image/jpeg',
+            ];
 
-            $origKeyWebp = null;
             if ($orig['bodyWebp'] !== null && in_array('webp', $profileDef->formats, true)) {
                 $origKeyWebp = $baseKey . '/original.webp';
-                $this->storage->put($origKeyWebp, $orig['bodyWebp'], 'image/webp');
+                $filesToUpload[] = [
+                    'key' => $origKeyWebp,
+                    'body' => $orig['bodyWebp'],
+                    'contentType' => 'image/webp',
+                ];
             }
 
-            $asset->setOriginal($origKeyJpg, $origKeyWebp, $orig['w'], $orig['h'], $sha1);
+            $origW = $orig['w'];
+            $origH = $orig['h'];
         }
 
-        // Variants
+        // Load all existing variants at once to prevent N+1 queries
+        $existingVariants = $em->getRepository(MediaVariant::class)->findBy(['asset' => $asset]);
+        $existingMap = [];
+        foreach ($existingVariants as $v) {
+            $key = $v->getVariant() . '_' . $v->getFormat();
+            $existingMap[$key] = $v;
+        }
+
+        // Render all variants and collect for batch upload
+        $variantsToCreate = [];
         foreach ($profileDef->variants as $variantName => $vDef) {
             foreach ($profileDef->formats as $fmt) {
                 if ($fmt === 'webp' && !$this->images->isWebpSupported()) {
@@ -212,21 +237,48 @@ final class MediaManager
                 );
 
                 $key = $baseKey . '/' . $variantName . '.' . $fmt;
-                $this->storage->put($key, $render['body'], $render['contentType']);
 
-                // Idempotent upsert-like behavior: check existing by unique key
-                $existing = $em->getRepository(MediaVariant::class)->findOneBy([
-                    'asset' => $asset,
-                    'variant' => $variantName,
-                    'format' => $fmt,
-                ]);
+                $filesToUpload[] = [
+                    'key' => $key,
+                    'body' => $render['body'],
+                    'contentType' => $render['contentType'],
+                ];
 
-                if ($existing === null) {
-                    $mv = new MediaVariant($asset, (string)$variantName, (string)$fmt, $key, $render['w'], $render['h'], strlen($render['body']));
-                    $asset->addVariant($mv);
-                    $em->persist($mv);
+                // Check if variant already exists using our preloaded map
+                $lookupKey = $variantName . '_' . $fmt;
+                if (!isset($existingMap[$lookupKey])) {
+                    $variantsToCreate[] = [
+                        'variantName' => $variantName,
+                        'format' => $fmt,
+                        'key' => $key,
+                        'w' => $render['w'],
+                        'h' => $render['h'],
+                        'size' => strlen($render['body']),
+                    ];
                 }
             }
+        }
+
+        // Upload all files in parallel (async batch upload)
+        $this->storage->putMultiple($filesToUpload, 5);
+
+        // After successful upload, update database
+        if ($profileDef->keepOriginal && $origKeyJpg !== null) {
+            $asset->setOriginal($origKeyJpg, $origKeyWebp, $origW, $origH, $sha1);
+        }
+
+        foreach ($variantsToCreate as $varData) {
+            $mv = new MediaVariant(
+                $asset,
+                (string)$varData['variantName'],
+                (string)$varData['format'],
+                $varData['key'],
+                $varData['w'],
+                $varData['h'],
+                $varData['size']
+            );
+            $asset->addVariant($mv);
+            $em->persist($mv);
         }
 
         $em->persist($asset);

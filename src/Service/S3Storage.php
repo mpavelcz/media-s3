@@ -3,6 +3,8 @@
 namespace App\MediaS3\Service;
 
 use Aws\S3\S3Client;
+use Aws\CommandPool;
+use GuzzleHttp\Promise\PromiseInterface;
 
 final class S3Storage
 {
@@ -40,6 +42,41 @@ final class S3Storage
             'CacheControl' => 'public, max-age=' . $this->cacheSeconds,
             'ACL' => 'public-read',
         ]);
+    }
+
+    /**
+     * Upload multiple files asynchronously in parallel.
+     * @param array<array{key:string,body:string,contentType:string}> $files
+     * @param int $concurrency Maximum number of concurrent uploads (default 5)
+     * @return void
+     */
+    public function putMultiple(array $files, int $concurrency = 5): void
+    {
+        if (empty($files)) {
+            return;
+        }
+
+        $commands = [];
+        foreach ($files as $file) {
+            $commands[] = $this->client->getCommand('PutObject', [
+                'Bucket' => $this->bucket,
+                'Key' => ltrim($file['key'], '/'),
+                'Body' => $file['body'],
+                'ContentType' => $file['contentType'],
+                'CacheControl' => 'public, max-age=' . $this->cacheSeconds,
+                'ACL' => 'public-read',
+            ]);
+        }
+
+        $pool = new CommandPool($this->client, $commands, [
+            'concurrency' => $concurrency,
+            'rejected' => function ($reason, $index) {
+                // Throw exception on first failure
+                throw new \RuntimeException("S3 upload failed for file at index {$index}: " . $reason);
+            },
+        ]);
+
+        $pool->promise()->wait();
     }
 
     public function delete(string $key): void
