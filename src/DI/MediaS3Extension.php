@@ -22,8 +22,8 @@ final class MediaS3Extension extends CompilerExtension
                 'endpoint' => Expect::string()->required(),
                 'region' => Expect::string()->required(),
                 'bucket' => Expect::string()->required(),
-                'accessKey' => Expect::string()->required(),
-                'secretKey' => Expect::string()->required(),
+                'accessKey' => Expect::string()->dynamic()->required(),
+                'secretKey' => Expect::string()->dynamic()->required(),
                 'publicBaseUrl' => Expect::string()->default(''),
                 'cacheSeconds' => Expect::int()->min(0)->default(31536000),
             ])->required(),
@@ -38,20 +38,20 @@ final class MediaS3Extension extends CompilerExtension
                 'prefetch' => Expect::int()->min(1)->default(10),
                 'retryMax' => Expect::int()->min(0)->default(3),
                 'dlq' => Expect::string()->nullable()->default(null),
-            ])->default((object)[]),
+            ]),
 
             'http' => Expect::structure([
                 'timeoutSeconds' => Expect::int()->min(1)->default(15),
                 'maxBytes' => Expect::int()->min(1)->default(15000000),
                 'userAgent' => Expect::string()->default('MediaS3Bot/1.0'),
-            ])->default((object)[]),
+            ]),
 
             'profiles' => Expect::arrayOf(
                 Expect::structure([
                     'prefix' => Expect::string()->required(),
                     'keepOriginal' => Expect::bool()->default(false),
                     'maxOriginalLongEdge' => Expect::int()->min(1)->default(3000),
-                    'formats' => Expect::listOf(Expect::anyOf('jpg', 'webp'))->default(['jpg', 'webp']),
+                    'formats' => Expect::listOf(Expect::anyOf('jpg', 'webp', 'png', 'avif'))->default(['jpg', 'webp']),
                     'variants' => Expect::arrayOf(
                         Expect::structure([
                             'w' => Expect::int()->min(1)->required(),

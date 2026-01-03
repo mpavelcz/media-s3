@@ -11,6 +11,17 @@ use Nette\Utils\Random;
 
 final class MediaManager
 {
+    private const ALLOWED_MIME_TYPES = [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'image/avif',
+    ];
+
+    private const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
     public function __construct(
         private ProfileRegistry $profiles,
         private S3Storage $storage,
@@ -41,6 +52,9 @@ final class MediaManager
             throw new \RuntimeException('Nejde načíst upload bytes.');
         }
 
+        // Validate uploaded image
+        $this->validateImageBytes($bytes);
+
         $asset = new MediaAsset($profile, MediaAsset::SOURCE_UPLOAD, null);
         $em->persist($asset);
         $em->flush(); // získat ID
@@ -70,6 +84,9 @@ final class MediaManager
         string $role,
         int $sort = 0
     ): MediaAsset {
+        // Validate source URL
+        $this->validateSourceUrl($sourceUrl);
+
         $asset = new MediaAsset($profile, MediaAsset::SOURCE_REMOTE, $sourceUrl);
         $asset->setStatus(MediaAsset::STATUS_QUEUED);
 
@@ -118,8 +135,8 @@ final class MediaManager
             return true; // someone else is processing, or ready
         }
 
-        // Refresh entity state
-        $em->clear();
+        // Refresh entity state without clearing all entities
+        $em->clear(MediaAsset::class);
         $asset = $em->find(MediaAsset::class, $assetId);
         if ($asset === null) return true;
 
@@ -140,6 +157,9 @@ final class MediaManager
                 if ($url === null) throw new \RuntimeException('Missing source_url for remote asset');
                 $dl = $this->downloader->download($url);
                 $bytes = $dl['bytes'];
+
+                // Validate downloaded image
+                $this->validateImageBytes($bytes);
             } else {
                 // For upload assets, worker typically not used. Mark ready if already has variants.
                 // But we still allow processing if bytes not stored – in that case we cannot do anything.
@@ -154,7 +174,7 @@ final class MediaManager
 
             return true;
         } catch (\Throwable $e) {
-            $em->clear();
+            $em->clear(MediaAsset::class);
             $asset = $em->find(MediaAsset::class, $assetId);
             if ($asset !== null) {
                 $asset->markFailed($e->getMessage());
@@ -170,6 +190,149 @@ final class MediaManager
     {
         $safeOwnerType = preg_replace('~[^A-Za-z0-9_\-]~', '_', $ownerType) ?: 'Owner';
         return rtrim($prefix, '/') . '/' . $safeOwnerType . '/' . $ownerId . '/' . $assetId;
+    }
+
+    private function validateImageBytes(string $bytes): void
+    {
+        if (strlen($bytes) === 0) {
+            throw new \RuntimeException('Image file is empty');
+        }
+
+        if (strlen($bytes) > self::MAX_FILE_SIZE) {
+            throw new \RuntimeException('Image file too large (max ' . (self::MAX_FILE_SIZE / 1024 / 1024) . 'MB)');
+        }
+
+        // Check MIME type using getimagesizefromstring
+        $info = @getimagesizefromstring($bytes);
+        if ($info === false) {
+            throw new \RuntimeException('Invalid image file');
+        }
+
+        $mime = $info['mime'] ?? '';
+        if (!in_array($mime, self::ALLOWED_MIME_TYPES, true)) {
+            throw new \RuntimeException('Unsupported image type: ' . $mime);
+        }
+    }
+
+    private function validateSourceUrl(string $url): void
+    {
+        // Check URL format
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            throw new \RuntimeException('Invalid URL format');
+        }
+
+        // Parse URL
+        $parsed = parse_url($url);
+        if ($parsed === false || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+            throw new \RuntimeException('Invalid URL structure');
+        }
+
+        // Only allow http/https
+        if (!in_array(strtolower($parsed['scheme']), ['http', 'https'], true)) {
+            throw new \RuntimeException('Only HTTP/HTTPS URLs are allowed');
+        }
+
+        // Block localhost and private IPs
+        $host = $parsed['host'];
+        if (in_array(strtolower($host), ['localhost', '127.0.0.1', '::1'], true)) {
+            throw new \RuntimeException('Localhost URLs are not allowed');
+        }
+
+        // Block private IP ranges
+        $ip = gethostbyname($host);
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+            throw new \RuntimeException('Private IP addresses are not allowed');
+        }
+    }
+
+    /**
+     * Find duplicate asset by SHA1 checksum
+     */
+    public function findDuplicateBySha1(EntityManagerInterface $em, string $sha1): ?MediaAsset
+    {
+        return $em->getRepository(MediaAsset::class)
+            ->findOneBy(['checksumSha1' => $sha1, 'status' => MediaAsset::STATUS_READY]);
+    }
+
+    /**
+     * Delete asset and all its files from S3
+     */
+    public function deleteAsset(EntityManagerInterface $em, int $assetId): void
+    {
+        /** @var MediaAsset|null $asset */
+        $asset = $em->find(MediaAsset::class, $assetId);
+        if ($asset === null) {
+            return; // Already deleted
+        }
+
+        // Delete all S3 files
+        $keysToDelete = [];
+
+        // Delete original files
+        if ($asset->getOriginalKeyJpg() !== null) {
+            $keysToDelete[] = $asset->getOriginalKeyJpg();
+        }
+        if ($asset->getOriginalKeyWebp() !== null) {
+            $keysToDelete[] = $asset->getOriginalKeyWebp();
+        }
+
+        // Delete variant files
+        foreach ($asset->getVariants() as $variant) {
+            $keysToDelete[] = $variant->getS3Key();
+        }
+
+        // Delete from S3
+        foreach ($keysToDelete as $key) {
+            try {
+                $this->storage->delete($key);
+            } catch (\Throwable $e) {
+                // Continue deleting other files even if one fails
+            }
+        }
+
+        // Delete from database (cascade will delete variants and links)
+        $em->remove($asset);
+        $em->flush();
+    }
+
+    /**
+     * Upload with deduplication check
+     */
+    public function uploadLocalWithDedup(
+        EntityManagerInterface $em,
+        FileUpload $upload,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role,
+        int $sort = 0
+    ): MediaAsset {
+        if (!$upload->isOk() || !$upload->isImage()) {
+            throw new \RuntimeException('Upload není validní obrázek.');
+        }
+
+        $bytes = file_get_contents($upload->getTemporaryFile());
+        if ($bytes === false || $bytes === '') {
+            throw new \RuntimeException('Nejde načíst upload bytes.');
+        }
+
+        // Validate uploaded image
+        $this->validateImageBytes($bytes);
+
+        // Check for duplicate
+        $sha1 = sha1($bytes);
+        $existing = $this->findDuplicateBySha1($em, $sha1);
+
+        if ($existing !== null) {
+            // Reuse existing asset, just create new link
+            $link = new MediaOwnerLink($ownerType, $ownerId, $existing, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            return $existing;
+        }
+
+        // No duplicate, proceed with normal upload
+        return $this->uploadLocal($em, $upload, $profile, $ownerType, $ownerId, $role, $sort);
     }
 
     private function storeOriginalAndVariants(EntityManagerInterface $em, MediaAsset $asset, string $bytes, $profileDef, string $baseKey): void
@@ -208,6 +371,22 @@ final class MediaManager
                 ];
             }
 
+            if ($orig['bodyAvif'] !== null && in_array('avif', $profileDef->formats, true)) {
+                $filesToUpload[] = [
+                    'key' => $baseKey . '/original.avif',
+                    'body' => $orig['bodyAvif'],
+                    'contentType' => 'image/avif',
+                ];
+            }
+
+            if ($orig['bodyPng'] !== null && in_array('png', $profileDef->formats, true)) {
+                $filesToUpload[] = [
+                    'key' => $baseKey . '/original.png',
+                    'body' => $orig['bodyPng'],
+                    'contentType' => 'image/png',
+                ];
+            }
+
             $origW = $orig['w'];
             $origH = $orig['h'];
         }
@@ -224,15 +403,27 @@ final class MediaManager
         $variantsToCreate = [];
         foreach ($profileDef->variants as $variantName => $vDef) {
             foreach ($profileDef->formats as $fmt) {
+                // Skip unsupported formats
                 if ($fmt === 'webp' && !$this->images->isWebpSupported()) {
                     continue;
                 }
+                if ($fmt === 'avif' && !$this->images->isAvifSupported()) {
+                    continue;
+                }
+                if ($fmt === 'png' && !$this->images->isPngSupported()) {
+                    continue;
+                }
+
+                $quality = match($fmt) {
+                    'webp', 'avif', 'png' => $qualityWebp,
+                    default => $qualityJpg,
+                };
 
                 $render = $this->images->renderVariant(
                     $bytes,
                     $vDef,
                     $fmt,
-                    $fmt === 'webp' ? $qualityWebp : $qualityJpg,
+                    $quality,
                     true
                 );
 

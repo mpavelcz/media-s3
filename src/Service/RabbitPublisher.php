@@ -69,27 +69,24 @@ final class RabbitPublisher
     public function publishProcessAsset(int $assetId): void
     {
         try {
-            $this->ensureConnected();
-
-            $payload = json_encode(['assetId' => $assetId], JSON_THROW_ON_ERROR);
-            $msg = new AMQPMessage($payload, [
-                'content_type' => 'application/json',
-                'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
-            ]);
-
-            $this->channel->basic_publish($msg, '', $this->queue);
+            $this->doPublish($assetId);
         } catch (\Throwable $e) {
             // On error, disconnect and retry once
             $this->disconnect();
-            $this->ensureConnected();
-
-            $payload = json_encode(['assetId' => $assetId], JSON_THROW_ON_ERROR);
-            $msg = new AMQPMessage($payload, [
-                'content_type' => 'application/json',
-                'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
-            ]);
-
-            $this->channel->basic_publish($msg, '', $this->queue);
+            $this->doPublish($assetId);
         }
+    }
+
+    private function doPublish(int $assetId): void
+    {
+        $this->ensureConnected();
+
+        $payload = json_encode(['assetId' => $assetId], JSON_THROW_ON_ERROR);
+        $msg = new AMQPMessage($payload, [
+            'content_type' => 'application/json',
+            'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
+        ]);
+
+        $this->channel->basic_publish($msg, '', $this->queue);
     }
 }

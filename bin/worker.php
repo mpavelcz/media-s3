@@ -5,10 +5,16 @@
 
 require __DIR__ . '/../../../vendor/autoload.php';
 
-// TODO: adjust this path to your Nette bootstrap (container factory).
-$bootstrapFile = __DIR__ . '/../../../app/bootstrap.php';
+// Bootstrap path can be configured via:
+// 1. Command line argument: php worker.php /path/to/bootstrap.php
+// 2. Environment variable: BOOTSTRAP_PATH=/path/to/bootstrap.php
+// 3. Default: ../../../app/bootstrap.php
+$bootstrapFile = $argv[1] ?? getenv('BOOTSTRAP_PATH') ?: __DIR__ . '/../../../app/bootstrap.php';
+
 if (!is_file($bootstrapFile)) {
-    fwrite(STDERR, "ERROR: bootstrap.php not found at {$bootstrapFile}. Adjust packages/media-s3/bin/worker.php\n");
+    fwrite(STDERR, "ERROR: bootstrap.php not found at {$bootstrapFile}\n");
+    fwrite(STDERR, "Usage: php worker.php [/path/to/bootstrap.php]\n");
+    fwrite(STDERR, "   or: BOOTSTRAP_PATH=/path/to/bootstrap.php php worker.php\n");
     exit(1);
 }
 

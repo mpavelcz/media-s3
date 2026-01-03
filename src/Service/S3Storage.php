@@ -45,7 +45,7 @@ final class S3Storage
     }
 
     /**
-     * Upload multiple files asynchronously in parallel.
+     * Upload multiple files asynchronously in parallel with rollback on failure.
      * @param array<array{key:string,body:string,contentType:string}> $files
      * @param int $concurrency Maximum number of concurrent uploads (default 5)
      * @return void
@@ -56,7 +56,9 @@ final class S3Storage
             return;
         }
 
+        $uploadedKeys = [];
         $commands = [];
+
         foreach ($files as $file) {
             $commands[] = $this->client->getCommand('PutObject', [
                 'Bucket' => $this->bucket,
@@ -68,15 +70,30 @@ final class S3Storage
             ]);
         }
 
-        $pool = new CommandPool($this->client, $commands, [
-            'concurrency' => $concurrency,
-            'rejected' => function ($reason, $index) {
-                // Throw exception on first failure
-                throw new \RuntimeException("S3 upload failed for file at index {$index}: " . $reason);
-            },
-        ]);
+        try {
+            $pool = new CommandPool($this->client, $commands, [
+                'concurrency' => $concurrency,
+                'fulfilled' => function ($result, $index) use (&$uploadedKeys, $files) {
+                    $uploadedKeys[] = ltrim($files[$index]['key'], '/');
+                },
+                'rejected' => function ($reason, $index) use (&$uploadedKeys) {
+                    // Cleanup already uploaded files on failure
+                    foreach ($uploadedKeys as $key) {
+                        try {
+                            $this->delete($key);
+                        } catch (\Throwable $e) {
+                            // Ignore cleanup errors
+                        }
+                    }
+                    throw new \RuntimeException("S3 upload failed for file at index {$index}: " . $reason);
+                },
+            ]);
 
-        $pool->promise()->wait();
+            $pool->promise()->wait();
+        } catch (\Throwable $e) {
+            // Ensure cleanup happened and re-throw
+            throw $e;
+        }
     }
 
     public function delete(string $key): void
