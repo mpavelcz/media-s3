@@ -1,5 +1,5 @@
 {
-  "name": "app/media-s3",
+  "name": "mpavel/media-s3",
   "description": "Nette + Doctrine image pipeline: GD resize variants, upload to S3 (Contabo), RabbitMQ worker, DB metadata.",
   "type": "library",
   "license": "MIT",
