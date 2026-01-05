@@ -1,9 +1,9 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Service;
+namespace MediaS3\Service;
 
-use App\MediaS3\ValueObject\ProfileDefinition;
-use App\MediaS3\ValueObject\VariantDefinition;
+use MediaS3\ValueObject\ProfileDefinition;
+use MediaS3\ValueObject\VariantDefinition;
 
 final class ProfileRegistry
 {

@@ -1,6 +1,6 @@
 # config.example.neon
 extensions:
-  mediaS3: App\MediaS3\DI\MediaS3Extension
+  mediaS3: MediaS3\DI\MediaS3Extension
 
 mediaS3:
   s3:

@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\ValueObject;
+namespace MediaS3\ValueObject;
 
 final class VariantDefinition
 {

@@ -1,6 +1,9 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Service;
+namespace MediaS3\Service;
+
+use MediaS3\DTO\DownloadResult;
+use MediaS3\Exception\ValidationException;
 
 final class HttpDownloader
 {
@@ -16,12 +19,11 @@ final class HttpDownloader
         $this->userAgent = (string) ($cfg['userAgent'] ?? 'MediaS3Bot/1.0');
     }
 
-    /** @return array{bytes:string, mime:string} */
-    public function download(string $url): array
+    public function download(string $url): DownloadResult
     {
         $ch = curl_init($url);
         if ($ch === false) {
-            throw new \RuntimeException('curl_init failed');
+            throw new ValidationException('curl_init failed');
         }
 
         $buf = '';
@@ -53,12 +55,12 @@ final class HttpDownloader
         curl_close($ch);
 
         if ($ok === false || $code < 200 || $code >= 300) {
-            throw new \RuntimeException("HTTP download failed ({$code}): {$err}");
+            throw new ValidationException("HTTP download failed ({$code}): {$err}");
         }
         if (strlen($buf) === 0) {
-            throw new \RuntimeException('Downloaded empty body');
+            throw new ValidationException('Downloaded empty body');
         }
 
-        return ['bytes' => $buf, 'mime' => $mime];
+        return new DownloadResult($buf, $mime, strlen($buf));
     }
 }

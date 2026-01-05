@@ -22,8 +22,10 @@ $container = require $bootstrapFile;
 
 /** @var \Doctrine\ORM\EntityManagerInterface $em */
 $em = $container->getByType(\Doctrine\ORM\EntityManagerInterface::class);
-/** @var \App\MediaS3\Service\MediaManager $media */
-$media = $container->getByType(\App\MediaS3\Service\MediaManager::class);
+/** @var \MediaS3\Service\MediaManager $media */
+$media = $container->getByType(\MediaS3\Service\MediaManager::class);
+/** @var \MediaS3\Service\RabbitPublisher $publisher */
+$publisher = $container->getByType(\MediaS3\Service\RabbitPublisher::class);
 
 $cfg = $container->getParameters()['mediaS3']['rabbit'] ?? null;
 if ($cfg === null) {
@@ -47,7 +49,7 @@ $ch->basic_qos(null, $prefetch, null);
 
 fwrite(STDOUT, "[media-worker] consuming queue '{$queue}' on {$host}:{$port}\n");
 
-$callback = function(\PhpAmqpLib\Message\AMQPMessage $msg) use ($media, $em, $retryMax) {
+$callback = function(\PhpAmqpLib\Message\AMQPMessage $msg) use ($media, $em, $retryMax, $publisher) {
     try {
         $data = json_decode($msg->getBody(), true, 512, JSON_THROW_ON_ERROR);
         $assetId = (int)($data['assetId'] ?? 0);
@@ -55,11 +57,21 @@ $callback = function(\PhpAmqpLib\Message\AMQPMessage $msg) use ($media, $em, $re
             throw new \RuntimeException('Invalid assetId in message');
         }
 
-        $ok = $media->processAsset($em, $assetId, $retryMax);
-        if ($ok) {
+        $result = $media->processAsset($em, $assetId, $retryMax);
+
+        if ($result['success']) {
             $msg->ack();
+        } elseif ($result['exceededRetries']) {
+            // Max retries exceeded, send to DLQ and ack original message
+            if ($publisher->hasDLQ()) {
+                $publisher->publishToDLQ($assetId, $result['error'] ?? 'Unknown error', $result['attempts'] ?? 0);
+                fwrite(STDOUT, "[media-worker] Asset {$assetId} moved to DLQ after {$result['attempts']} attempts\n");
+            } else {
+                fwrite(STDERR, "[media-worker] Asset {$assetId} exceeded max retries but DLQ not configured\n");
+            }
+            $msg->ack(); // Remove from main queue
         } else {
-            // requeue (basic_nack requeue=true)
+            // Temporary failure, requeue
             $msg->nack(true);
         }
     } catch (\Throwable $e) {

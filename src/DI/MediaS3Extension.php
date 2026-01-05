@@ -1,14 +1,14 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\DI;
+namespace MediaS3\DI;
 
-use App\MediaS3\Service\HttpDownloader;
-use App\MediaS3\Service\ImageProcessorGd;
-use App\MediaS3\Service\MediaManager;
-use App\MediaS3\Service\MediaUrlResolver;
-use App\MediaS3\Service\ProfileRegistry;
-use App\MediaS3\Service\RabbitPublisher;
-use App\MediaS3\Service\S3Storage;
+use MediaS3\Service\HttpDownloader;
+use MediaS3\Service\ImageProcessorGd;
+use MediaS3\Service\MediaManager;
+use MediaS3\Service\MediaUrlResolver;
+use MediaS3\Service\ProfileRegistry;
+use MediaS3\Service\RabbitPublisher;
+use MediaS3\Service\S3Storage;
 use Nette\DI\CompilerExtension;
 use Nette\Schema\Expect;
 use Nette\Schema\Schema;

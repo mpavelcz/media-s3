@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Entity;
+namespace MediaS3\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
 

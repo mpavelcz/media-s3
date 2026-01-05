@@ -10,16 +10,24 @@ Tento balíček přidává:
 
 ## Instalace
 1) Zkopíruj složku `packages/media-s3` do projektu.
-2) Přidej do root `composer.json` autoload (pokud ještě nemáš psr-4 pro `App\`):
-   - tento balíček používá namespace `App\MediaS3\...` (můžeš přejmenovat)
+2) Přidej do root `composer.json` autoload:
+   ```json
+   {
+     "autoload": {
+       "psr-4": {
+         "MediaS3\\": "packages/media-s3/src/"
+       }
+     }
+   }
+   ```
 3) Nainstaluj závislosti:
    ```bash
-   composer require aws/aws-sdk-php php-amqplib/php-amqplib nette/di nette/utils doctrine/orm
+   composer require aws/aws-sdk-php php-amqplib/php-amqplib nette/di nette/utils doctrine/orm psr/log
    ```
 4) V `config.neon` přidej extension:
    ```neon
    extensions:
-     mediaS3: App\MediaS3\DI\MediaS3Extension
+     mediaS3: MediaS3\DI\MediaS3Extension
    ```
 
 ## Konfigurace (ukázka)
@@ -29,16 +37,102 @@ Viz `config.example.neon` v balíčku.
 - SQL: `migrations/001_init.sql`
 - nebo (pokud používáš Doctrine Migrations) přepiš to do svého migračního systému.
 
-## Worker
-Spusť jako separátní container proces:
+## RabbitMQ Worker
+
+Worker zpracovává asynchronní úlohy (např. stahování remote obrázků).
+
+### Spuštění workeru
+
 ```bash
+# Výchozí cesta k bootstrap.php (../../../app/bootstrap.php)
 php packages/media-s3/bin/worker.php
+
+# Vlastní cesta k bootstrap.php
+php packages/media-s3/bin/worker.php /custom/path/to/bootstrap.php
+
+# Nebo přes environment variable
+BOOTSTRAP_PATH=/custom/path/to/bootstrap.php php packages/media-s3/bin/worker.php
 ```
 
-Worker:
-- čte zprávy z Rabbitu (queue `media.process`)
-- **idempotentně** generuje origin + varianty, nahrává do S3, zapisuje do DB
-- používá stav `media_asset.status` (QUEUED/PROCESSING/READY/FAILED)
+### Jak worker funguje
+
+1. **Připojení k RabbitMQ** - Připojí se k frontě `media.process` (konfigurovatelné v `config.neon`)
+2. **Zpracování zpráv** - Každá zpráva obsahuje `assetId` k zpracování
+3. **Idempotence** - Worker používá optimistic locking (claim pattern), takže zpracování je bezpečné při více workerech
+4. **Stavy assetu**:
+   - `QUEUED` - Čeká na zpracování
+   - `PROCESSING` - Právě se zpracovává
+   - `READY` - Úspěšně zpracováno
+   - `FAILED` - Selhalo (bude retryovat)
+
+### Retry logika
+
+- Worker automaticky retryuje failed assety až `retryMax` krát (výchozí 3x)
+- Po překročení limitu:
+  - Pokud je nakonfigurovaná DLQ (`dlq` v configu), zpráva se přesune do Dead Letter Queue
+  - Pokud není DLQ, zpráva se pouze označí jako failed a zaloguje
+
+### Dead Letter Queue (DLQ)
+
+DLQ uchovává zprávy, které selhaly i po všech retrys:
+
+```neon
+mediaS3:
+  rabbit:
+    queue: 'media.process'
+    dlq: 'media.process.dlq'  # Optional
+    retryMax: 3
+```
+
+Zprávy v DLQ obsahují:
+- `assetId` - ID assetu
+- `error` - Chybová zpráva
+- `attempts` - Počet pokusů
+- `failedAt` - Timestamp selhání
+
+### Monitoring
+
+Worker loguje do STDOUT/STDERR:
+```bash
+[media-worker] consuming queue 'media.process' on rabbit:5672
+[media-worker] Asset 123 moved to DLQ after 3 attempts
+[media-worker] ERROR: Failed to download image...
+```
+
+### Docker / Systemd
+
+**Docker Compose:**
+```yaml
+services:
+  worker:
+    image: your-app
+    command: php packages/media-s3/bin/worker.php
+    restart: unless-stopped
+    depends_on:
+      - rabbit
+      - db
+```
+
+**Systemd:**
+```ini
+[Unit]
+Description=Media S3 Worker
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/html
+ExecStart=/usr/bin/php packages/media-s3/bin/worker.php
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Škálování
+
+Můžeš spustit více workerů paralelně - worker používá `basic_qos(prefetch=10)` pro fair dispatch.
 
 ## Poznámky
 - WEBP se generuje jen pokud `gd_info()['WebP Support'] === true`.

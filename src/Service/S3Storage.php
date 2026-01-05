@@ -1,7 +1,8 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Service;
+namespace MediaS3\Service;
 
+use MediaS3\Exception\S3StorageException;
 use Aws\S3\S3Client;
 use Aws\CommandPool;
 use GuzzleHttp\Promise\PromiseInterface;
@@ -85,7 +86,7 @@ final class S3Storage
                             // Ignore cleanup errors
                         }
                     }
-                    throw new \RuntimeException("S3 upload failed for file at index {$index}: " . $reason);
+                    throw new S3StorageException("S3 upload failed for file at index {$index}: " . $reason);
                 },
             ]);
 

@@ -1,9 +1,12 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Service;
+namespace MediaS3\Service;
 
-use App\MediaS3\ValueObject\ProfileDefinition;
-use App\MediaS3\ValueObject\VariantDefinition;
+use MediaS3\DTO\OriginalRenderResult;
+use MediaS3\DTO\VariantRenderResult;
+use MediaS3\Exception\ImageProcessingException;
+use MediaS3\ValueObject\ProfileDefinition;
+use MediaS3\ValueObject\VariantDefinition;
 
 /**
  * GD-based resizing (downscale-only). Outputs JPG and optionally WEBP.
@@ -50,7 +53,7 @@ final class ImageProcessorGd
         $availableMemory = $limit - $currentMemory;
 
         if ($estimatedMemory > $availableMemory) {
-            throw new \RuntimeException(
+            throw new ImageProcessingException(
                 sprintf(
                     'Insufficient memory to process image %dx%d (needs ~%dMB, available ~%dMB)',
                     $width,
@@ -85,7 +88,7 @@ final class ImageProcessorGd
     {
         $info = getimagesizefromstring($bytes);
         if ($info === false) {
-            throw new \RuntimeException('Unsupported image bytes');
+            throw new ImageProcessingException('Unsupported image bytes');
         }
         return ['w' => (int)$info[0], 'h' => (int)$info[1], 'type' => (int)$info[2]];
     }
@@ -96,13 +99,12 @@ final class ImageProcessorGd
         // Prefer imagecreatefromstring for broad support.
         $img = @imagecreatefromstring($bytes);
         if ($img === false) {
-            throw new \RuntimeException('GD cannot decode image');
+            throw new ImageProcessingException('GD cannot decode image');
         }
         return $img;
     }
 
-    /** @return array{body:string,w:int,h:int,contentType:string} */
-    public function renderVariant(string $srcBytes, VariantDefinition $def, string $format, int $quality, bool $noUpscale = true): array
+    public function renderVariant(string $srcBytes, VariantDefinition $def, string $format, int $quality, bool $noUpscale = true): VariantRenderResult
     {
         $meta = $this->getSizeFromBytes($srcBytes);
         $srcW = $meta['w']; $srcH = $meta['h'];
@@ -159,11 +161,11 @@ final class ImageProcessorGd
             case 'webp':
                 if (!function_exists('imagewebp')) {
                     imagedestroy($srcImg); imagedestroy($dstImg);
-                    throw new \RuntimeException('GD webp functions missing');
+                    throw new ImageProcessingException('GD webp functions missing');
                 }
                 if (!imagewebp($dstImg, null, $quality)) {
                     imagedestroy($srcImg); imagedestroy($dstImg);
-                    throw new \RuntimeException('imagewebp failed');
+                    throw new ImageProcessingException('imagewebp failed');
                 }
                 $ct = 'image/webp';
                 break;
@@ -171,11 +173,11 @@ final class ImageProcessorGd
             case 'avif':
                 if (!function_exists('imageavif')) {
                     imagedestroy($srcImg); imagedestroy($dstImg);
-                    throw new \RuntimeException('GD avif functions missing');
+                    throw new ImageProcessingException('GD avif functions missing');
                 }
                 if (!imageavif($dstImg, null, $quality)) {
                     imagedestroy($srcImg); imagedestroy($dstImg);
-                    throw new \RuntimeException('imageavif failed');
+                    throw new ImageProcessingException('imageavif failed');
                 }
                 $ct = 'image/avif';
                 break;
@@ -183,13 +185,13 @@ final class ImageProcessorGd
             case 'png':
                 if (!function_exists('imagepng')) {
                     imagedestroy($srcImg); imagedestroy($dstImg);
-                    throw new \RuntimeException('GD png functions missing');
+                    throw new ImageProcessingException('GD png functions missing');
                 }
                 // PNG quality is 0-9 (compression level), convert from 0-100
                 $pngQuality = (int) (9 - ($quality / 100 * 9));
                 if (!imagepng($dstImg, null, $pngQuality)) {
                     imagedestroy($srcImg); imagedestroy($dstImg);
-                    throw new \RuntimeException('imagepng failed');
+                    throw new ImageProcessingException('imagepng failed');
                 }
                 $ct = 'image/png';
                 break;
@@ -212,12 +214,11 @@ final class ImageProcessorGd
         imagedestroy($srcImg);
         imagedestroy($dstImg);
 
-        return ['body' => $body, 'w' => $dstW, 'h' => $dstH, 'contentType' => $ct];
+        return new VariantRenderResult($body, $dstW, $dstH, $ct);
     }
 
     /** Create a downscaled "original" within maxLongEdge (no-upscale). */
-    /** @return array{bodyJpg:string, bodyWebp:?string, w:int, h:int} */
-    public function renderOriginal(string $srcBytes, int $maxLongEdge, int $qualityJpg = 82, int $qualityWebp = 80): array
+    public function renderOriginal(string $srcBytes, int $maxLongEdge, int $qualityJpg = 82, int $qualityWebp = 80): OriginalRenderResult
     {
         $meta = $this->getSizeFromBytes($srcBytes);
         $srcW = $meta['w']; $srcH = $meta['h'];
@@ -273,13 +274,6 @@ final class ImageProcessorGd
         imagedestroy($srcImg);
         imagedestroy($dstImg);
 
-        return [
-            'bodyJpg' => $bodyJpg,
-            'bodyWebp' => $bodyWebp,
-            'bodyAvif' => $bodyAvif,
-            'bodyPng' => $bodyPng,
-            'w' => $dstW,
-            'h' => $dstH,
-        ];
+        return new OriginalRenderResult($bodyJpg, $bodyWebp, $bodyAvif, $bodyPng, $dstW, $dstH);
     }
 }

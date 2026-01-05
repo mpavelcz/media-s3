@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Entity;
+namespace MediaS3\Entity;
 
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
@@ -115,6 +115,7 @@ class MediaAsset
     public function getSourceUrl(): ?string { return $this->sourceUrl; }
     public function getStatus(): string { return $this->status; }
     public function getAttempts(): int { return $this->attempts; }
+    public function getLastError(): ?string { return $this->lastError; }
     public function getOriginalKeyJpg(): ?string { return $this->originalKeyJpg; }
     public function getOriginalKeyWebp(): ?string { return $this->originalKeyWebp; }
     public function getVariants(): Collection { return $this->variants; }

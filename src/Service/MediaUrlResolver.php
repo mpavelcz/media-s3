@@ -1,8 +1,8 @@
 <?php declare(strict_types=1);
 
-namespace App\MediaS3\Service;
+namespace MediaS3\Service;
 
-use App\MediaS3\Entity\MediaAsset;
+use MediaS3\Entity\MediaAsset;
 
 final class MediaUrlResolver
 {
