@@ -99,6 +99,64 @@ final class MediaManager
     }
 
     /**
+     * Sync upload pro remote obrázek – stáhne obrázek a uloží origin + varianty hned a zapíše do DB.
+     */
+    public function uploadRemote(
+        EntityManagerInterface $em,
+        string $sourceUrl,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role,
+        int $sort = 0
+    ): MediaAsset {
+        // Validate source URL
+        $this->validateSourceUrl($sourceUrl);
+
+        $this->logger->info('Starting remote upload', [
+            'sourceUrl' => $sourceUrl,
+            'profile' => $profile,
+            'ownerType' => $ownerType,
+            'ownerId' => $ownerId,
+            'role' => $role,
+        ]);
+
+        $p = $this->profiles->get($profile);
+
+        // Download remote image
+        $dl = $this->downloader->download($sourceUrl);
+        $bytes = $dl->bytes;
+
+        // Validate downloaded image
+        $this->validateImageBytes($bytes);
+
+        $em->beginTransaction();
+        try {
+            $asset = new MediaAsset($profile, MediaAsset::SOURCE_REMOTE, $sourceUrl);
+            $em->persist($asset);
+            $em->flush(); // získat ID
+
+            $assetId = $asset->getId();
+            $baseKey = $this->baseKey($p->prefix, $ownerType, $ownerId, $assetId);
+
+            $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
+
+            $link = new MediaOwnerLink($ownerType, $ownerId, $asset, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            $em->commit();
+
+            $this->logger->info('Remote upload completed', ['assetId' => $assetId]);
+
+            return $asset;
+        } catch (\Throwable $e) {
+            $em->rollback();
+            $this->logger->error('Remote upload failed', ['error' => $e->getMessage()]);
+            throw $e;
+        }
+    }
+
+    /**
      * Remote obrázek – založí asset v DB, uloží link a dá job do Rabbitu.
      * Variants se udělají async workerem.
      */
@@ -404,6 +462,49 @@ final class MediaManager
 
         // No duplicate, proceed with normal upload
         return $this->uploadLocal($em, $upload, $profile, $ownerType, $ownerId, $role, $sort);
+    }
+
+    /**
+     * Remote upload with deduplication check
+     */
+    public function uploadRemoteWithDedup(
+        EntityManagerInterface $em,
+        string $sourceUrl,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role,
+        int $sort = 0
+    ): MediaAsset {
+        // Validate source URL
+        $this->validateSourceUrl($sourceUrl);
+
+        // Download remote image
+        $dl = $this->downloader->download($sourceUrl);
+        $bytes = $dl->bytes;
+
+        // Validate downloaded image
+        $this->validateImageBytes($bytes);
+
+        // Check for duplicate
+        $sha1 = sha1($bytes);
+        $existing = $this->findDuplicateBySha1($em, $sha1);
+
+        if ($existing !== null) {
+            $this->logger->info('Reusing existing asset (dedup)', [
+                'existingAssetId' => $existing->getId(),
+                'sha1' => $sha1,
+                'sourceUrl' => $sourceUrl,
+            ]);
+            // Reuse existing asset, just create new link
+            $link = new MediaOwnerLink($ownerType, $ownerId, $existing, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            return $existing;
+        }
+
+        // No duplicate, proceed with normal remote upload
+        return $this->uploadRemote($em, $sourceUrl, $profile, $ownerType, $ownerId, $role, $sort);
     }
 
     private function storeOriginalAndVariants(EntityManagerInterface $em, MediaAsset $asset, string $bytes, $profileDef, string $baseKey): void

@@ -134,6 +134,58 @@ WantedBy=multi-user.target
 
 Můžeš spustit více workerů paralelně - worker používá `basic_qos(prefetch=10)` pro fair dispatch.
 
+## Použití v kódu
+
+### Upload lokálního souboru (synchronní)
+```php
+$mediaManager = $container->getByType(MediaManager::class);
+$em = $container->getByType(EntityManagerInterface::class);
+
+// Bez deduplikace
+$asset = $mediaManager->uploadLocal(
+    $em,
+    $upload, // Nette\Http\FileUpload
+    'product', // profile
+    'Product', // ownerType
+    123, // ownerId
+    'main', // role
+    0 // sort
+);
+
+// S deduplikací (automaticky reuse duplicitní obrázky)
+$asset = $mediaManager->uploadLocalWithDedup($em, $upload, 'product', 'Product', 123, 'main', 0);
+```
+
+### Upload remote URL (synchronní) - NOVÉ!
+```php
+// Stáhne remote obrázek a nahraje rovnou na S3 bez RabbitMQ
+$asset = $mediaManager->uploadRemote(
+    $em,
+    'https://example.com/image.jpg', // sourceUrl
+    'product', // profile
+    'Product', // ownerType
+    123, // ownerId
+    'main', // role
+    0 // sort
+);
+
+// S deduplikací
+$asset = $mediaManager->uploadRemoteWithDedup($em, 'https://example.com/image.jpg', 'product', 'Product', 123, 'main', 0);
+```
+
+### Upload remote URL (asynchronní přes RabbitMQ)
+```php
+// Vytvoří záznam v DB a pošle job do RabbitMQ
+// Worker pak stáhne a zpracuje obrázek asynchronně
+$asset = $mediaManager->enqueueRemote($em, 'https://example.com/image.jpg', 'product', 'Product', 123, 'main', 0);
+```
+
+### Kdy použít co?
+
+- **`uploadLocal()`** / **`uploadLocalWithDedup()`** - Pro upload z formuláře (FileUpload)
+- **`uploadRemote()`** / **`uploadRemoteWithDedup()`** - Pro okamžitý download a upload remote obrázku (bez RabbitMQ)
+- **`enqueueRemote()`** - Pro asynchronní zpracování remote obrázků (s RabbitMQ workerem)
+
 ## Poznámky
 - WEBP se generuje jen pokud `gd_info()['WebP Support'] === true`.
 - S3 objekty jsou `public-read` a mají `Cache-Control: public, max-age=31536000` (1 rok).
