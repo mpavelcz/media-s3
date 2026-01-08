@@ -40,5 +40,10 @@ class MediaOwnerLink
         $this->createdAt = new \DateTimeImmutable();
     }
 
+    public function getId(): int { return $this->id; }
     public function getAsset(): MediaAsset { return $this->asset; }
+    public function getSort(): int { return $this->sort; }
+    public function getOwnerType(): string { return $this->ownerType; }
+    public function getOwnerId(): int { return $this->ownerId; }
+    public function getRole(): string { return $this->role; }
 }
