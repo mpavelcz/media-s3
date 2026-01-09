@@ -18,6 +18,12 @@ final class MediaS3Extension extends CompilerExtension
     public function getConfigSchema(): Schema
     {
         return Expect::structure([
+            'entities' => Expect::structure([
+                'mediaAsset' => Expect::string()->default('MediaS3\Entity\MediaAsset'),
+                'mediaOwnerLink' => Expect::string()->default('MediaS3\Entity\MediaOwnerLink'),
+                'mediaVariant' => Expect::string()->default('MediaS3\Entity\MediaVariant'),
+            ]),
+
             's3' => Expect::structure([
                 'endpoint' => Expect::string()->required(),
                 'region' => Expect::string()->required(),
@@ -98,6 +104,8 @@ final class MediaS3Extension extends CompilerExtension
                 $this->prefix('@imageProcessor'),
                 $this->prefix('@httpDownloader'),
                 $this->prefix('@rabbitPublisher'),
+                null, // logger
+                (array) $cfg->entities, // entity class names
             ]);
     }
 }

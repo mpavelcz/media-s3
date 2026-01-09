@@ -28,6 +28,9 @@ final class MediaManager
     private const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
     private LoggerInterface $logger;
+    private string $mediaAssetClass;
+    private string $mediaOwnerLinkClass;
+    private string $mediaVariantClass;
 
     public function __construct(
         private ProfileRegistry $profiles,
@@ -36,8 +39,15 @@ final class MediaManager
         private HttpDownloader $downloader,
         private RabbitPublisher $publisher,
         ?LoggerInterface $logger = null,
+        ?array $entityClasses = null,
     ) {
         $this->logger = $logger ?? new NullLogger();
+
+        // Entity class names - configurable pro různé projekty
+        $entityClasses = $entityClasses ?? [];
+        $this->mediaAssetClass = $entityClasses['mediaAsset'] ?? MediaAsset::class;
+        $this->mediaOwnerLinkClass = $entityClasses['mediaOwnerLink'] ?? MediaOwnerLink::class;
+        $this->mediaVariantClass = $entityClasses['mediaVariant'] ?? MediaVariant::class;
     }
 
     /**
@@ -74,7 +84,8 @@ final class MediaManager
 
         $em->beginTransaction();
         try {
-            $asset = new MediaAsset($profile, MediaAsset::SOURCE_UPLOAD, null);
+            $assetClass = $this->mediaAssetClass;
+            $asset = new $assetClass($profile, $assetClass::SOURCE_UPLOAD, null);
             $em->persist($asset);
             $em->flush(); // získat ID
 
@@ -83,7 +94,8 @@ final class MediaManager
 
             $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
 
-            $link = new MediaOwnerLink($ownerType, $ownerId, $asset, $role, $sort);
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
             $em->persist($link);
             $em->flush();
             $em->commit();
@@ -132,7 +144,8 @@ final class MediaManager
 
         $em->beginTransaction();
         try {
-            $asset = new MediaAsset($profile, MediaAsset::SOURCE_REMOTE, $sourceUrl);
+            $assetClass = $this->mediaAssetClass;
+            $asset = new $assetClass($profile, $assetClass::SOURCE_REMOTE, $sourceUrl);
             $em->persist($asset);
             $em->flush(); // získat ID
 
@@ -141,7 +154,8 @@ final class MediaManager
 
             $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
 
-            $link = new MediaOwnerLink($ownerType, $ownerId, $asset, $role, $sort);
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
             $em->persist($link);
             $em->flush();
             $em->commit();
@@ -181,13 +195,15 @@ final class MediaManager
 
         $em->beginTransaction();
         try {
-            $asset = new MediaAsset($profile, MediaAsset::SOURCE_REMOTE, $sourceUrl);
+            $assetClass = $this->mediaAssetClass;
+            $asset = new $assetClass($profile, $assetClass::SOURCE_REMOTE, $sourceUrl);
             $asset->setStatus(MediaAsset::STATUS_QUEUED);
 
             $em->persist($asset);
             $em->flush();
 
-            $link = new MediaOwnerLink($ownerType, $ownerId, $asset, $role, $sort);
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
             $em->persist($link);
             $em->flush();
             $em->commit();
@@ -214,7 +230,7 @@ final class MediaManager
         $this->logger->info('Processing asset', ['assetId' => $assetId]);
 
         /** @var MediaAsset|null $asset */
-        $asset = $em->find(MediaAsset::class, $assetId);
+        $asset = $em->find($this->mediaAssetClass, $assetId);
         if ($asset === null) {
             $this->logger->warning('Asset not found', ['assetId' => $assetId]);
             return ProcessAssetResult::success()->toArray(); // ack (nothing to do)
@@ -235,7 +251,7 @@ final class MediaManager
         }
 
         // Claim
-        $q = $em->createQuery('UPDATE ' . MediaAsset::class . ' a SET a.status = :processing WHERE a.id = :id AND a.status IN (:queued, :failed)');
+        $q = $em->createQuery('UPDATE ' . $this->mediaAssetClass . ' a SET a.status = :processing WHERE a.id = :id AND a.status IN (:queued, :failed)');
         $q->setParameters([
             'processing' => MediaAsset::STATUS_PROCESSING,
             'id' => $assetId,
@@ -248,8 +264,8 @@ final class MediaManager
         }
 
         // Refresh entity state without clearing all entities
-        $em->clear(MediaAsset::class);
-        $asset = $em->find(MediaAsset::class, $assetId);
+        $em->clear($this->mediaAssetClass);
+        $asset = $em->find($this->mediaAssetClass, $assetId);
         if ($asset === null) return true;
 
         try {
@@ -296,8 +312,8 @@ final class MediaManager
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            $em->clear(MediaAsset::class);
-            $asset = $em->find(MediaAsset::class, $assetId);
+            $em->clear($this->mediaAssetClass);
+            $asset = $em->find($this->mediaAssetClass, $assetId);
             $attempts = 0;
             if ($asset !== null) {
                 $asset->markFailed($e->getMessage());
@@ -375,7 +391,7 @@ final class MediaManager
      */
     public function findDuplicateBySha1(EntityManagerInterface $em, string $sha1): ?MediaAsset
     {
-        return $em->getRepository(MediaAsset::class)
+        return $em->getRepository($this->mediaAssetClass)
             ->findOneBy(['checksumSha1' => $sha1, 'status' => MediaAsset::STATUS_READY]);
     }
 
@@ -385,7 +401,7 @@ final class MediaManager
     public function deleteAsset(EntityManagerInterface $em, int $assetId): void
     {
         /** @var MediaAsset|null $asset */
-        $asset = $em->find(MediaAsset::class, $assetId);
+        $asset = $em->find($this->mediaAssetClass, $assetId);
         if ($asset === null) {
             return; // Already deleted
         }
@@ -564,7 +580,7 @@ final class MediaManager
         }
 
         // Load all existing variants at once to prevent N+1 queries
-        $existingVariants = $em->getRepository(MediaVariant::class)->findBy(['asset' => $asset]);
+        $existingVariants = $em->getRepository($this->mediaVariantClass)->findBy(['asset' => $asset]);
         $existingMap = [];
         foreach ($existingVariants as $v) {
             $key = $v->getVariant() . '_' . $v->getFormat();
@@ -631,7 +647,8 @@ final class MediaManager
         }
 
         foreach ($variantsToCreate as $varData) {
-            $mv = new MediaVariant(
+            $variantClass = $this->mediaVariantClass;
+            $mv = new $variantClass(
                 $asset,
                 (string)$varData['variantName'],
                 (string)$varData['format'],
