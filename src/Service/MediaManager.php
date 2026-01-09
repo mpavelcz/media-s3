@@ -523,7 +523,7 @@ final class MediaManager
         return $this->uploadRemote($em, $sourceUrl, $profile, $ownerType, $ownerId, $role, $sort);
     }
 
-    private function storeOriginalAndVariants(EntityManagerInterface $em, MediaAsset $asset, string $bytes, $profileDef, string $baseKey): void
+    private function storeOriginalAndVariants(EntityManagerInterface $em, object $asset, string $bytes, $profileDef, string $baseKey): void
     {
         $qualityJpg = 82;
         $qualityWebp = 80;
