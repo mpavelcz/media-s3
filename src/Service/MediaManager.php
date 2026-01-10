@@ -104,8 +104,18 @@ final class MediaManager
 
             return $asset;
         } catch (\Throwable $e) {
-            $em->rollback();
-            $this->logger->error('Local upload failed', ['error' => $e->getMessage()]);
+            $this->logger->error('Local upload failed', [
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            // Rollback only if transaction is still active (may auto-rollback on flush exception)
+            if ($em->getConnection()->isTransactionActive()) {
+                $em->rollback();
+            }
+
             throw $e;
         }
     }

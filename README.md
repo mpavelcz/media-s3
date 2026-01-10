@@ -191,4 +191,9 @@ $asset = $mediaManager->enqueueRemote($em, 'https://example.com/image.jpg', 'pro
 - S3 objekty jsou `public-read` a mají `Cache-Control: public, max-age=31536000` (1 rok).
 - Cloudflare si to pak hezky cachuje přes `cdn.domena.cz`.
 
-# media-s3
+## Dokumentace
+
+Pro detailní technickou dokumentaci a použití v jiných projektech viz:
+
+- **[AI_USAGE_GUIDE.md](AI_USAGE_GUIDE.md)** - Stručný praktický návod pro AI asistenty a vývojáře (quick start, příklady použití)
+- **[TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md)** - Kompletní technická dokumentace (architektura, API, workflow, troubleshooting)
