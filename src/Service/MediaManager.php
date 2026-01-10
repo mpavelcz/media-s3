@@ -61,7 +61,7 @@ final class MediaManager
         int $ownerId,
         string $role,
         int $sort = 0
-    ): MediaAsset {
+    ): object {
         if (!$upload->isOk() || !$upload->isImage()) {
             throw new InvalidImageException('Upload není validní obrázek.');
         }
@@ -134,7 +134,7 @@ final class MediaManager
         int $ownerId,
         string $role,
         int $sort = 0
-    ): MediaAsset {
+    ): object {
         // Validate source URL
         $this->validateSourceUrl($sourceUrl);
 
@@ -198,7 +198,7 @@ final class MediaManager
         int $ownerId,
         string $role,
         int $sort = 0
-    ): MediaAsset {
+    ): object {
         // Validate source URL
         $this->validateSourceUrl($sourceUrl);
 
@@ -405,7 +405,7 @@ final class MediaManager
     /**
      * Find duplicate asset by SHA1 checksum
      */
-    public function findDuplicateBySha1(EntityManagerInterface $em, string $sha1): ?MediaAsset
+    public function findDuplicateBySha1(EntityManagerInterface $em, string $sha1): ?object
     {
         return $em->getRepository($this->mediaAssetClass)
             ->findOneBy(['checksumSha1' => $sha1, 'status' => MediaAsset::STATUS_READY]);
@@ -463,7 +463,7 @@ final class MediaManager
         int $ownerId,
         string $role,
         int $sort = 0
-    ): MediaAsset {
+    ): object {
         if (!$upload->isOk() || !$upload->isImage()) {
             throw new InvalidImageException('Upload není validní obrázek.');
         }
@@ -486,7 +486,8 @@ final class MediaManager
                 'sha1' => $sha1,
             ]);
             // Reuse existing asset, just create new link
-            $link = new MediaOwnerLink($ownerType, $ownerId, $existing, $role, $sort);
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $existing, $role, $sort);
             $em->persist($link);
             $em->flush();
             return $existing;
@@ -507,7 +508,7 @@ final class MediaManager
         int $ownerId,
         string $role,
         int $sort = 0
-    ): MediaAsset {
+    ): object {
         // Validate source URL
         $this->validateSourceUrl($sourceUrl);
 
@@ -529,7 +530,8 @@ final class MediaManager
                 'sourceUrl' => $sourceUrl,
             ]);
             // Reuse existing asset, just create new link
-            $link = new MediaOwnerLink($ownerType, $ownerId, $existing, $role, $sort);
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $existing, $role, $sort);
             $em->persist($link);
             $em->flush();
             return $existing;

@@ -478,13 +478,13 @@ foreach ($urls as $url => $productId) {
 
 ```php
 // MediaManager
-uploadLocal(em, upload, profile, ownerType, ownerId, role, sort): MediaAsset
-uploadLocalWithDedup(...): MediaAsset
-uploadRemote(em, url, profile, ownerType, ownerId, role, sort): MediaAsset
-uploadRemoteWithDedup(...): MediaAsset
-enqueueRemote(em, url, profile, ownerType, ownerId, role, sort): MediaAsset
+uploadLocal(em, upload, profile, ownerType, ownerId, role, sort): object  // Returns MediaAsset (or custom entity)
+uploadLocalWithDedup(...): object
+uploadRemote(em, url, profile, ownerType, ownerId, role, sort): object
+uploadRemoteWithDedup(...): object
+enqueueRemote(em, url, profile, ownerType, ownerId, role, sort): object
 deleteAsset(em, assetId): void
-findDuplicateBySha1(em, sha1): ?MediaAsset
+findDuplicateBySha1(em, sha1): ?object
 
 // MediaAsset
 getId(): int
