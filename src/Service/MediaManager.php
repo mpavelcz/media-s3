@@ -875,4 +875,56 @@ final class MediaManager
         $em->persist($asset);
         $em->flush();
     }
+
+    /**
+     * Vrátí počet selhaných assetů
+     */
+    public function countFailedAssets(EntityManagerInterface $em): int
+    {
+        return (int) $em->createQueryBuilder()
+            ->select('COUNT(a.id)')
+            ->from($this->mediaAssetClass, 'a')
+            ->where('a.status = :status')
+            ->setParameter('status', MediaAsset::STATUS_FAILED)
+            ->getQuery()
+            ->getSingleScalarResult();
+    }
+
+    /**
+     * Vrátí selhané assety starší než zadaný počet hodin
+     * @return object[]
+     */
+    public function findFailedAssetsOlderThan(EntityManagerInterface $em, int $hours): array
+    {
+        $cutoff = new \DateTimeImmutable("-{$hours} hours");
+
+        return $em->createQueryBuilder()
+            ->select('a')
+            ->from($this->mediaAssetClass, 'a')
+            ->where('a.status = :status')
+            ->andWhere('a.createdAt < :cutoff')
+            ->setParameter('status', MediaAsset::STATUS_FAILED)
+            ->setParameter('cutoff', $cutoff)
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Smaže selhané assety starší než zadaný počet hodin
+     * @return int Počet smazaných assetů
+     */
+    public function deleteFailedAssetsOlderThan(EntityManagerInterface $em, int $hours): int
+    {
+        $assets = $this->findFailedAssetsOlderThan($em, $hours);
+        $count = 0;
+
+        foreach ($assets as $asset) {
+            $this->deleteAsset($em, $asset->getId());
+            $count++;
+        }
+
+        $this->logger->info('Deleted old failed assets', ['count' => $count, 'olderThanHours' => $hours]);
+
+        return $count;
+    }
 }

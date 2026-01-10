@@ -2,6 +2,7 @@
 
 namespace MediaS3\DI;
 
+use MediaS3\Command\CleanupFailedAssetsCommand;
 use MediaS3\Service\HttpDownloader;
 use MediaS3\Service\ImageProcessorGd;
 use MediaS3\Service\MediaManager;
@@ -44,7 +45,7 @@ final class MediaS3Extension extends CompilerExtension
                 'queue' => Expect::string()->default('media.process'),
                 'prefetch' => Expect::int()->min(1)->default(10),
                 'retryMax' => Expect::int()->min(0)->default(3),
-                'dlq' => Expect::string()->nullable()->default(null),
+                'dlq' => Expect::anyOf(Expect::string(), null)->default(null),
             ]),
 
             'http' => Expect::structure([
@@ -122,6 +123,11 @@ final class MediaS3Extension extends CompilerExtension
                 null, // logger
                 (array) $cfg->entities, // entity class names
             ]);
+
+        // Console command pro cleanup selhaných assetů
+        $builder->addDefinition($this->prefix('cleanupFailedAssetsCommand'))
+            ->setFactory(CleanupFailedAssetsCommand::class)
+            ->addTag('console.command', 'media:cleanup-failed');
     }
 
     public function beforeCompile(): void
