@@ -38,6 +38,7 @@ final class MediaManager
         private ImageProcessorGd $images,
         private HttpDownloader $downloader,
         private RabbitPublisher $publisher,
+        private ?TempFileManager $tempFileManager = null,
         ?LoggerInterface $logger = null,
         ?array $entityClasses = null,
     ) {
@@ -239,9 +240,10 @@ final class MediaManager
     /**
      * Worker entry – process an asset idempotently.
      * - claim QUEUED/FAILED -> PROCESSING
+     * @param string|null $tempFilePath Optional path to temp file for local uploads
      * @return array{success:bool,exceededRetries:bool,error:string|null,attempts:int}
      */
-    public function processAsset(EntityManagerInterface $em, int $assetId, int $retryMax = 3): array
+    public function processAsset(EntityManagerInterface $em, int $assetId, int $retryMax = 3, ?string $tempFilePath = null): array
     {
         $this->logger->info('Processing asset', ['assetId' => $assetId]);
 
@@ -306,13 +308,18 @@ final class MediaManager
 
                 // Validate downloaded image
                 $this->validateImageBytes($bytes);
-            } else {
-                // For upload assets, worker typically not used. Mark ready if already has variants.
-                // But we still allow processing if bytes not stored – in that case we cannot do anything.
-                throw new ValidationException('Upload asset processed by worker without original bytes is not supported. Use uploadLocal() sync.');
-            }
 
-            $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
+                $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
+            } elseif ($tempFilePath !== null) {
+                // Process local upload from temp file
+                $this->processAssetUpload($em, $asset, $tempFilePath);
+                // processAssetUpload already marks asset as ready and flushes
+                $this->logger->info('Asset processing completed', ['assetId' => $assetId]);
+                return ProcessAssetResult::success()->toArray();
+            } else {
+                // For upload assets without tempFilePath
+                throw new ValidationException('Upload asset processed by worker without temp file path is not supported.');
+            }
 
             $asset->markReady();
             $em->persist($asset);
@@ -495,6 +502,192 @@ final class MediaManager
 
         // No duplicate, proceed with normal upload
         return $this->uploadLocal($em, $upload, $profile, $ownerType, $ownerId, $role, $sort);
+    }
+
+    /**
+     * Async upload (lokální soubor) – vytvoří asset se statusem QUEUED, uloží soubor do temp,
+     * publikuje zprávu do RabbitMQ. Zpracování (upload do S3) probíhá workerem na pozadí.
+     */
+    public function uploadLocalAsync(
+        EntityManagerInterface $em,
+        FileUpload $upload,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role,
+        int $sort = 0
+    ): object {
+        if ($this->tempFileManager === null) {
+            throw new \RuntimeException('TempFileManager is required for async uploads');
+        }
+
+        if (!$upload->isOk() || !$upload->isImage()) {
+            throw new InvalidImageException('Upload není validní obrázek.');
+        }
+
+        $this->logger->info('Starting async local upload', [
+            'profile' => $profile,
+            'ownerType' => $ownerType,
+            'ownerId' => $ownerId,
+            'role' => $role,
+        ]);
+
+        // Validate image before saving to temp
+        $bytes = file_get_contents($upload->getTemporaryFile());
+        if ($bytes === false || $bytes === '') {
+            throw new InvalidImageException('Nejde načíst upload bytes.');
+        }
+        $this->validateImageBytes($bytes);
+
+        $em->beginTransaction();
+        try {
+            // Save to temp directory
+            $tempPath = $this->tempFileManager->saveTempFile($upload);
+
+            // Create MediaAsset with QUEUED status
+            $assetClass = $this->mediaAssetClass;
+            $asset = new $assetClass($profile, $assetClass::SOURCE_UPLOAD, null);
+            $asset->setStatus(MediaAsset::STATUS_QUEUED);
+            $em->persist($asset);
+            $em->flush(); // get ID
+
+            // Create MediaOwnerLink
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            $em->commit();
+
+            // Publish to RabbitMQ
+            $this->publisher->publishProcessAssetWithFile($asset->getId(), $tempPath);
+
+            $this->logger->info('Async upload queued', ['assetId' => $asset->getId(), 'tempPath' => $tempPath]);
+
+            return $asset;
+        } catch (\Throwable $e) {
+            $this->logger->error('Async upload failed', [
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            if ($em->getConnection()->isTransactionActive()) {
+                $em->rollback();
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Async upload s deduplikací – kontroluje SHA1, pokud existuje vrátí existující asset,
+     * jinak vytvoří nový a zařadí do fronty pro async zpracování.
+     */
+    public function uploadLocalWithDedupAsync(
+        EntityManagerInterface $em,
+        FileUpload $upload,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role,
+        int $sort = 0
+    ): object {
+        if (!$upload->isOk() || !$upload->isImage()) {
+            throw new InvalidImageException('Upload není validní obrázek.');
+        }
+
+        $bytes = file_get_contents($upload->getTemporaryFile());
+        if ($bytes === false || $bytes === '') {
+            throw new InvalidImageException('Nejde načíst upload bytes.');
+        }
+
+        // Validate uploaded image
+        $this->validateImageBytes($bytes);
+
+        // Check for duplicate
+        $sha1 = sha1($bytes);
+        $existing = $this->findDuplicateBySha1($em, $sha1);
+
+        if ($existing !== null) {
+            $this->logger->info('Reusing existing asset (async dedup)', [
+                'existingAssetId' => $existing->getId(),
+                'sha1' => $sha1,
+            ]);
+            // Reuse existing asset, just create new link
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $existing, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            return $existing;
+        }
+
+        // No duplicate, proceed with async upload
+        return $this->uploadLocalAsync($em, $upload, $profile, $ownerType, $ownerId, $role, $sort);
+    }
+
+    /**
+     * Zpracuje asset z lokálního uploadu (voláno workerem).
+     * Načte soubor z temp adresáře, nahraje do S3 a vytvoří varianty.
+     */
+    private function processAssetUpload(
+        EntityManagerInterface $em,
+        object $asset,
+        string $tempFilePath
+    ): void {
+        if ($this->tempFileManager === null) {
+            throw new \RuntimeException('TempFileManager is required for processing uploads');
+        }
+
+        $this->logger->info('Processing upload from temp file', [
+            'assetId' => $asset->getId(),
+            'tempFilePath' => $tempFilePath
+        ]);
+
+        // Check temp file exists
+        if (!file_exists($tempFilePath)) {
+            throw new \RuntimeException('Temporary file not found: ' . $tempFilePath);
+        }
+
+        // Read file bytes
+        $bytes = file_get_contents($tempFilePath);
+        if ($bytes === false || $bytes === '') {
+            throw new InvalidImageException('Failed to read temp file or file is empty');
+        }
+
+        // Validate image
+        $this->validateImageBytes($bytes);
+
+        // Get profile definition
+        $p = $this->profiles->get($asset->getProfile());
+
+        // Find MediaOwnerLink to determine ownerType/ownerId for baseKey
+        /** @var MediaOwnerLink|null $link */
+        $link = $em->getRepository($this->mediaOwnerLinkClass)
+            ->findOneBy(['asset' => $asset]);
+
+        if ($link === null) {
+            // Fallback: use generic path
+            $baseKey = $p->prefix . '/_asset/' . $asset->getId();
+        } else {
+            // Use owner-based path
+            $ownerType = $link->getOwnerType();
+            $ownerId = $link->getOwnerId();
+            $baseKey = $this->baseKey($p->prefix, $ownerType, $ownerId, $asset->getId());
+        }
+
+        // Store original and variants to S3
+        $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
+
+        // Mark asset as ready
+        $asset->markReady();
+        $em->persist($asset);
+        $em->flush();
+
+        // Delete temp file
+        $this->tempFileManager->deleteTempFile($tempFilePath);
+
+        $this->logger->info('Upload processing completed', ['assetId' => $asset->getId()]);
     }
 
     /**

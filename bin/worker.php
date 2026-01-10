@@ -57,7 +57,9 @@ $callback = function(\PhpAmqpLib\Message\AMQPMessage $msg) use ($media, $em, $re
             throw new \RuntimeException('Invalid assetId in message');
         }
 
-        $result = $media->processAsset($em, $assetId, $retryMax);
+        $tempFilePath = $data['tempFilePath'] ?? null;
+
+        $result = $media->processAsset($em, $assetId, $retryMax, $tempFilePath);
 
         if ($result['success']) {
             $msg->ack();

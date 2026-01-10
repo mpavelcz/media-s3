@@ -84,11 +84,42 @@ final class RabbitPublisher
         }
     }
 
+    /**
+     * Publish asset processing message with temp file path (for local uploads)
+     */
+    public function publishProcessAssetWithFile(int $assetId, string $tempFilePath): void
+    {
+        try {
+            $this->doPublishWithFile($assetId, $tempFilePath);
+        } catch (\Throwable $e) {
+            // On error, disconnect and retry once
+            $this->disconnect();
+            $this->doPublishWithFile($assetId, $tempFilePath);
+        }
+    }
+
     private function doPublish(int $assetId): void
     {
         $this->ensureConnected();
 
         $payload = json_encode(['assetId' => $assetId], JSON_THROW_ON_ERROR);
+        $msg = new AMQPMessage($payload, [
+            'content_type' => 'application/json',
+            'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
+        ]);
+
+        $this->channel->basic_publish($msg, '', $this->queue);
+    }
+
+    private function doPublishWithFile(int $assetId, string $tempFilePath): void
+    {
+        $this->ensureConnected();
+
+        $payload = json_encode([
+            'assetId' => $assetId,
+            'tempFilePath' => $tempFilePath
+        ], JSON_THROW_ON_ERROR);
+
         $msg = new AMQPMessage($payload, [
             'content_type' => 'application/json',
             'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
