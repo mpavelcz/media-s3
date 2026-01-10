@@ -9,6 +9,7 @@ use MediaS3\Service\MediaUrlResolver;
 use MediaS3\Service\ProfileRegistry;
 use MediaS3\Service\RabbitPublisher;
 use MediaS3\Service\S3Storage;
+use MediaS3\Service\TempFileManager;
 use Nette\DI\CompilerExtension;
 use Nette\Schema\Expect;
 use Nette\Schema\Schema;
@@ -52,6 +53,10 @@ final class MediaS3Extension extends CompilerExtension
                 'userAgent' => Expect::string()->default('MediaS3Bot/1.0'),
             ]),
 
+            'temp' => Expect::structure([
+                'uploadDir' => Expect::string()->dynamic()->required(),
+            ])->nullable(),
+
             'profiles' => Expect::arrayOf(
                 Expect::structure([
                     'prefix' => Expect::string()->required(),
@@ -92,6 +97,12 @@ final class MediaS3Extension extends CompilerExtension
         $builder->addDefinition($this->prefix('rabbitPublisher'))
             ->setFactory(RabbitPublisher::class, [(array) $cfg->rabbit]);
 
+        // Register TempFileManager if temp config is provided
+        if ($cfg->temp !== null) {
+            $builder->addDefinition($this->prefix('tempFileManager'))
+                ->setFactory(TempFileManager::class, [$cfg->temp->uploadDir]);
+        }
+
         $builder->addDefinition($this->prefix('mediaUrlResolver'))
             ->setFactory(MediaUrlResolver::class, [
                 $this->prefix('@s3Storage'),
@@ -104,6 +115,7 @@ final class MediaS3Extension extends CompilerExtension
                 $this->prefix('@imageProcessor'),
                 $this->prefix('@httpDownloader'),
                 $this->prefix('@rabbitPublisher'),
+                $cfg->temp !== null ? $this->prefix('@tempFileManager') : null,
                 null, // logger
                 (array) $cfg->entities, // entity class names
             ]);
