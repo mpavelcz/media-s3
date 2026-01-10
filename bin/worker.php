@@ -34,7 +34,8 @@ $cfg = $mediaS3Params['rabbit'] ?? null;
 
 // Fallback: read from config files directly if not in parameters
 if ($cfg === null) {
-    $rootDir = dirname(__DIR__, 3);
+    // Worker is in vendor/mpavel/media-s3/bin, go 4 levels up to project root
+    $rootDir = dirname(__DIR__, 4);
     $configFile = $rootDir . '/config/media.neon';
     if (file_exists($configFile)) {
         $neonContent = file_get_contents($configFile);
