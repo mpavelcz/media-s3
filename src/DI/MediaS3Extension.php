@@ -126,7 +126,9 @@ final class MediaS3Extension extends CompilerExtension
 
         // Console command pro cleanup selhaných assetů
         $builder->addDefinition($this->prefix('cleanupFailedAssetsCommand'))
-            ->setFactory(CleanupFailedAssetsCommand::class)
+            ->setFactory(CleanupFailedAssetsCommand::class, [
+                $this->prefix('@mediaManager'),
+            ])
             ->addTag('console.command', 'media:cleanup-failed');
     }
 
