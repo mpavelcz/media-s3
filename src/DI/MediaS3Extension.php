@@ -53,9 +53,12 @@ final class MediaS3Extension extends CompilerExtension
                 'userAgent' => Expect::string()->default('MediaS3Bot/1.0'),
             ]),
 
-            'temp' => Expect::structure([
-                'uploadDir' => Expect::string()->dynamic()->required(),
-            ])->nullable(),
+            'temp' => Expect::anyOf(
+                Expect::structure([
+                    'uploadDir' => Expect::string()->dynamic()->required(),
+                ]),
+                null
+            )->default(null),
 
             'profiles' => Expect::arrayOf(
                 Expect::structure([
