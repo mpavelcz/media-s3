@@ -123,4 +123,20 @@ final class MediaS3Extension extends CompilerExtension
                 (array) $cfg->entities, // entity class names
             ]);
     }
+
+    public function beforeCompile(): void
+    {
+        $builder = $this->getContainerBuilder();
+        $cfg = $this->getConfig();
+
+        // Export configuration as parameters for worker access
+        $builder->parameters['mediaS3'] = [
+            'rabbit' => (array) $cfg->rabbit,
+            's3' => (array) $cfg->s3,
+            'http' => (array) $cfg->http,
+            'temp' => $cfg->temp !== null ? ['uploadDir' => $cfg->temp->uploadDir] : null,
+            'profiles' => (array) $cfg->profiles,
+            'entities' => (array) $cfg->entities,
+        ];
+    }
 }
