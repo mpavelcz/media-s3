@@ -4,7 +4,7 @@
 // Assumes your project has bootstrap at: app/bootstrap.php (adjust below).
 
 // Autoload: when installed as vendor package, go up to project root
-require __DIR__ . '/../../../../autoload.php';
+require __DIR__ . '/../../../autoload.php';
 
 // Bootstrap path can be configured via:
 // 1. Command line argument: php worker.php /path/to/bootstrap.php
