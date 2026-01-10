@@ -3,7 +3,8 @@
 // Minimal Rabbit consumer for Nette project.
 // Assumes your project has bootstrap at: app/bootstrap.php (adjust below).
 
-require __DIR__ . '/../../../vendor/autoload.php';
+// Autoload: when installed as vendor package, go up to project root
+require __DIR__ . '/../../../../autoload.php';
 
 // Bootstrap path can be configured via:
 // 1. Command line argument: php worker.php /path/to/bootstrap.php
