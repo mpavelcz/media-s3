@@ -94,6 +94,9 @@ final class MediaManager
 
             $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
 
+            $asset->markReady();
+            $em->persist($asset);
+
             $linkClass = $this->mediaOwnerLinkClass;
             $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
             $em->persist($link);
@@ -163,6 +166,9 @@ final class MediaManager
             $baseKey = $this->baseKey($p->prefix, $ownerType, $ownerId, $assetId);
 
             $this->storeOriginalAndVariants($em, $asset, $bytes, $p, $baseKey);
+
+            $asset->markReady();
+            $em->persist($asset);
 
             $linkClass = $this->mediaOwnerLinkClass;
             $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
