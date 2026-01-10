@@ -28,7 +28,36 @@ $media = $container->getByType(\MediaS3\Service\MediaManager::class);
 /** @var \MediaS3\Service\RabbitPublisher $publisher */
 $publisher = $container->getByType(\MediaS3\Service\RabbitPublisher::class);
 
-$cfg = $container->getParameters()['mediaS3']['rabbit'] ?? null;
+// Try to get config from parameters, fallback to defaults
+$mediaS3Params = $container->getParameters()['mediaS3'] ?? null;
+$cfg = $mediaS3Params['rabbit'] ?? null;
+
+// Fallback: read from config files directly if not in parameters
+if ($cfg === null) {
+    $rootDir = dirname(__DIR__, 3);
+    $configFile = $rootDir . '/config/media.neon';
+    if (file_exists($configFile)) {
+        $neonContent = file_get_contents($configFile);
+        // Simple parsing - not production ready but works for basic config
+        preg_match('/rabbit:\s*\n\s*host:\s*[\'"]?(\w+)[\'"]?/m', $neonContent, $hostMatch);
+        preg_match('/port:\s*(\d+)/m', $neonContent, $portMatch);
+        preg_match('/queue:\s*[\'"]?([^\'"\n]+)[\'"]?/m', $neonContent, $queueMatch);
+        preg_match('/prefetch:\s*(\d+)/m', $neonContent, $prefetchMatch);
+        preg_match('/retryMax:\s*(\d+)/m', $neonContent, $retryMatch);
+
+        $cfg = [
+            'host' => $hostMatch[1] ?? 'rabbit',
+            'port' => isset($portMatch[1]) ? (int)$portMatch[1] : 5672,
+            'user' => 'guest',
+            'pass' => 'guest',
+            'vhost' => '/',
+            'queue' => $queueMatch[1] ?? 'media.process',
+            'prefetch' => isset($prefetchMatch[1]) ? (int)$prefetchMatch[1] : 10,
+            'retryMax' => isset($retryMatch[1]) ? (int)$retryMatch[1] : 3,
+        ];
+    }
+}
+
 if ($cfg === null) {
     fwrite(STDERR, "ERROR: mediaS3.rabbit config missing.\n");
     exit(1);
