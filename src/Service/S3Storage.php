@@ -31,6 +31,15 @@ final class S3Storage
                 'secret' => $cfg['secretKey'],
             ],
         ]);
+
+        $this->ensureBucketExists();
+    }
+
+    private function ensureBucketExists(): void
+    {
+        if (!$this->client->doesBucketExist($this->bucket)) {
+            $this->client->createBucket(['Bucket' => $this->bucket]);
+        }
     }
 
     public function put(string $key, string $body, string $contentType): void
