@@ -66,6 +66,46 @@ final class TempFileManager
     }
 
     /**
+     * Uloží raw bytes do dočasného souboru
+     *
+     * @param string $bytes Obsah souboru
+     * @param string $extension Přípona souboru (např. 'jpg')
+     * @return string Plná cesta k uloženému souboru
+     * @throws RuntimeException Pokud se nepodaří vytvořit adresář nebo uložit soubor
+     */
+    public function saveTempBytes(string $bytes, string $extension = 'tmp'): string
+    {
+        $dateDir = date('Y/m/d');
+        $targetDir = $this->tempDir . '/' . $dateDir;
+
+        if (!is_dir($targetDir)) {
+            try {
+                FileSystem::createDir($targetDir);
+            } catch (\Throwable $e) {
+                throw new RuntimeException(
+                    sprintf('Failed to create temp directory %s: %s', $targetDir, $e->getMessage()),
+                    0,
+                    $e
+                );
+            }
+        }
+
+        $timestamp = time();
+        $random = Random::generate(8, '0-9a-z');
+        $fileName = sprintf('%d_%s.%s', $timestamp, $random, $extension);
+        $targetPath = $targetDir . '/' . $fileName;
+
+        $result = file_put_contents($targetPath, $bytes);
+        if ($result === false) {
+            throw new RuntimeException(
+                sprintf('Failed to write temp file %s', $targetPath)
+            );
+        }
+
+        return $targetPath;
+    }
+
+    /**
      * Smaže dočasný soubor
      *
      * @param string $path Cesta k souboru

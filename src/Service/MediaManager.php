@@ -734,6 +734,98 @@ final class MediaManager
         return $this->uploadRemote($em, $sourceUrl, $profile, $ownerType, $ownerId, $role, $sort);
     }
 
+    /**
+     * Async remote upload s deduplikací - stáhne obrázek, zkontroluje duplicitu,
+     * a pokud není duplikát, uloží do temp a zařadí do fronty pro async zpracování.
+     */
+    public function enqueueRemoteWithDedup(
+        EntityManagerInterface $em,
+        string $sourceUrl,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role,
+        int $sort = 0
+    ): object {
+        if ($this->tempFileManager === null) {
+            throw new \RuntimeException('TempFileManager is required for async remote uploads with dedup');
+        }
+
+        // Validate source URL
+        $this->validateSourceUrl($sourceUrl);
+
+        $this->logger->info('Starting async remote upload with dedup', [
+            'sourceUrl' => $sourceUrl,
+            'profile' => $profile,
+            'ownerType' => $ownerType,
+            'ownerId' => $ownerId,
+            'role' => $role,
+        ]);
+
+        // Download remote image (sync - needed for SHA1 check)
+        $dl = $this->downloader->download($sourceUrl);
+        $bytes = $dl->bytes;
+
+        // Validate downloaded image
+        $this->validateImageBytes($bytes);
+
+        // Check for duplicate
+        $sha1 = sha1($bytes);
+        $existing = $this->findDuplicateBySha1($em, $sha1);
+
+        if ($existing !== null) {
+            $this->logger->info('Reusing existing asset (async dedup)', [
+                'existingAssetId' => $existing->getId(),
+                'sha1' => $sha1,
+                'sourceUrl' => $sourceUrl,
+            ]);
+            // Reuse existing asset, just create new link
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $existing, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            return $existing;
+        }
+
+        // No duplicate - save to temp and enqueue for async processing
+        $tempPath = $this->tempFileManager->saveTempBytes($bytes, 'img');
+
+        $em->beginTransaction();
+        try {
+            $assetClass = $this->mediaAssetClass;
+            $asset = new $assetClass($profile, $assetClass::SOURCE_REMOTE, $sourceUrl);
+            $asset->setStatus(MediaAsset::STATUS_QUEUED);
+            $em->persist($asset);
+            $em->flush();
+
+            $linkClass = $this->mediaOwnerLinkClass;
+            $link = new $linkClass($ownerType, $ownerId, $asset, $role, $sort);
+            $em->persist($link);
+            $em->flush();
+            $em->commit();
+
+            // Publish to RabbitMQ with temp file path
+            $this->publisher->publishProcessAssetWithFile($asset->getId(), $tempPath);
+
+            $this->logger->info('Async remote upload enqueued', [
+                'assetId' => $asset->getId(),
+                'tempPath' => $tempPath,
+            ]);
+
+            return $asset;
+        } catch (\Throwable $e) {
+            if ($em->getConnection()->isTransactionActive()) {
+                $em->rollback();
+            }
+
+            // Clean up temp file on failure
+            $this->tempFileManager->deleteTempFile($tempPath);
+
+            $this->logger->error('Async remote upload failed', ['error' => $e->getMessage()]);
+            throw $e;
+        }
+    }
+
     private function storeOriginalAndVariants(EntityManagerInterface $em, object $asset, string $bytes, $profileDef, string $baseKey): void
     {
         $qualityJpg = 82;
