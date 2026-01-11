@@ -187,6 +187,7 @@ $asset = $mediaManager->enqueueRemote($em, 'https://example.com/image.jpg', 'pro
 - **`enqueueRemote()`** - Pro asynchronní zpracování remote obrázků (s RabbitMQ workerem)
 
 ## Poznámky
+- **S3 bucket se automaticky vytvoří**, pokud neexistuje (při inicializaci `S3Storage`).
 - WEBP se generuje jen pokud `gd_info()['WebP Support'] === true`.
 - S3 objekty jsou `public-read` a mají `Cache-Control: public, max-age=31536000` (1 rok).
 - Cloudflare si to pak hezky cachuje přes `cdn.domena.cz`.
