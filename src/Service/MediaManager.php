@@ -289,13 +289,20 @@ final class MediaManager
         try {
             $p = $this->profiles->get($asset->getProfile());
 
-            // Determine baseKey: use first owner link if exists, otherwise generic
-            $ownerType = 'Unknown';
-            $ownerId = 0;
+            // Find MediaOwnerLink to determine ownerType/ownerId for baseKey
+            /** @var object|null $link */
+            $link = $em->getRepository($this->mediaOwnerLinkClass)
+                ->findOneBy(['asset' => $asset]);
 
-            // We want deterministic folder. If you need exact owner in worker, you can fetch MediaOwnerLink.
-            // Keep simple: put under prefix/_asset/{id}/...
-            $baseKey = $p->prefix . '/_asset/' . $asset->getId();
+            if ($link === null) {
+                // Fallback: use generic path
+                $baseKey = $p->prefix . '/_asset/' . $asset->getId();
+            } else {
+                // Use owner-based path
+                $ownerType = $link->getOwnerType();
+                $ownerId = $link->getOwnerId();
+                $baseKey = $this->baseKey($p->prefix, $ownerType, $ownerId, $asset->getId());
+            }
 
             $bytes = null;
             if ($asset->getSource() === MediaAsset::SOURCE_REMOTE) {
