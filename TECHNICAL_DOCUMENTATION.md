@@ -131,6 +131,13 @@ MediaManager::uploadLocal(em, FileUpload, profile, ownerType, ownerId, role, sor
 
 Příklad: `products/Product/123/456/thumb.webp`
 
+**Volitelný ownerType:**
+Pokud je `ownerType` prázdný string nebo `"_"`, přeskočí se v cestě:
+```
+{prefix}/{ownerId}/{assetId}/original.jpg   # ownerType = '' nebo '_'
+```
+Příklad: `gallery/123/456/thumb.webp` (bez ownerType)
+
 ### 2. Synchronní upload remote obrázku
 
 ```php
@@ -310,8 +317,22 @@ enqueueRemote(
 ): MediaAsset
 
 // S deduplikací (automaticky reuse duplicitních obrázků)
+// + kontrola duplicitního linku - nevytváří duplicitní linky při opakovaném importu
 uploadLocalWithDedup(...): MediaAsset
 uploadRemoteWithDedup(...): MediaAsset
+enqueueRemoteWithDedup(...): MediaAsset  // async verze s deduplikací
+
+// Bulk import více URL s deduplikací a progress callbackem
+importFromUrls(
+  EntityManagerInterface $em,
+  array $urls,                     // pole URL k importu
+  string $profile,
+  string $ownerType,               // použijte '_' pro flat strukturu
+  int $ownerId,
+  string $role = 'gallery',
+  bool $async = false,             // true = přes RabbitMQ
+  ?callable $onProgress = null     // callback(int $current, int $total, string $url, ?object $asset, ?\Throwable $error)
+): array{imported: int, skipped: int, failed: int, assets: object[]}
 
 // Hledání duplicitního assetu podle SHA1
 findDuplicateBySha1(
@@ -408,6 +429,48 @@ isPngSupported(): bool       // function_exists('imagepng')
 **Alpha handling:**
 - JPG: alpha flatten na bílé pozadí
 - WEBP/AVIF/PNG: zachování alpha kanálu
+
+### HtmlImageExtractor
+
+Služba pro extrakci URL obrázků z HTML obsahu.
+
+```php
+// Extrakce s výchozími patterny (fancybox, lightbox, photoswipe, data atributy)
+extract(
+  string $html,
+  ?string $baseUrl = null    // pro normalizaci relativních URL
+): string[]
+
+// Extrakce s vlastními regex patterny
+extractWithPatterns(
+  string $html,
+  array $patterns,           // pole regex patternů (capture group 1 = URL)
+  ?string $baseUrl = null
+): string[]
+
+// Extrakce pouze <img src="...">
+extractImgSrc(
+  string $html,
+  ?string $baseUrl = null,
+  ?string $pathFilter = null // volitelný filter cesty (např. '/gallery/')
+): string[]
+```
+
+**Výchozí patterny:**
+- Fancybox linky (`<a class="fancybox" href="...">`)
+- Lightbox data atributy (`data-src`, `data-full`, `data-large`, `data-original`)
+- PhotoSwipe (`data-pswp-src`)
+- Generic lightbox (`data-lightbox`, `data-gallery`, `rel="lightbox"`)
+
+**Normalizace URL:**
+- Absolutní URL: bez změny
+- Protocol-relative (`//`): přidá `https:`
+- Root-relative (`/path`): přidá origin z baseUrl
+- Relativní (`path`): přidá baseUrl + `/`
+
+**Validace:**
+- Pouze HTTP/HTTPS URL
+- Pouze obrazové přípony: jpg, jpeg, png, webp, gif
 
 ### HttpDownloader
 

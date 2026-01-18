@@ -180,11 +180,49 @@ $asset = $mediaManager->uploadRemoteWithDedup($em, 'https://example.com/image.jp
 $asset = $mediaManager->enqueueRemote($em, 'https://example.com/image.jpg', 'product', 'Product', 123, 'main', 0);
 ```
 
+### Bulk import z URL (s deduplikací)
+```php
+// Extrakce URL obrázků z HTML
+$extractor = $container->getByType(HtmlImageExtractor::class);
+$urls = $extractor->extract($html, 'https://example.com');
+
+// Nebo s vlastními patterny
+$urls = $extractor->extractWithPatterns($html, [
+    '/href="([^"]*\/photos\/[^"]+\.jpg)"/i',
+], 'https://example.com');
+
+// Bulk import s progress callbackem
+$result = $mediaManager->importFromUrls(
+    $em,
+    $urls,
+    'gallery',       // profile
+    '_',             // ownerType (prázdný = flat struktura bez ownerType v cestě)
+    123,             // ownerId
+    'gallery',       // role
+    false,           // async (true = přes RabbitMQ)
+    function ($current, $total, $url, $asset, $error) {
+        echo "[$current/$total] $url\n";
+    }
+);
+
+echo "Imported: {$result['imported']}, Failed: {$result['failed']}\n";
+```
+
+### S3 struktura s volitelným ownerType
+
+Pokud použijete `ownerType = '_'` nebo prázdný string, cesta na S3 bude bez ownerType:
+```
+gallery/123/1/original.jpg      # ownerType = '_' nebo ''
+gallery/Product/123/1/original.jpg  # ownerType = 'Product'
+```
+
 ### Kdy použít co?
 
 - **`uploadLocal()`** / **`uploadLocalWithDedup()`** - Pro upload z formuláře (FileUpload)
 - **`uploadRemote()`** / **`uploadRemoteWithDedup()`** - Pro okamžitý download a upload remote obrázku (bez RabbitMQ)
-- **`enqueueRemote()`** - Pro asynchronní zpracování remote obrázků (s RabbitMQ workerem)
+- **`enqueueRemote()`** / **`enqueueRemoteWithDedup()`** - Pro asynchronní zpracování remote obrázků (s RabbitMQ workerem)
+- **`importFromUrls()`** - Pro bulk import více URL najednou s progress callbackem
+- **`HtmlImageExtractor`** - Pro extrakci URL obrázků z HTML (fancybox, lightbox, img src...)
 
 ## Poznámky
 - **S3 bucket se automaticky vytvoří**, pokud neexistuje (při inicializaci `S3Storage`).

@@ -122,9 +122,67 @@ $asset = $this->mediaManager->uploadLocalWithDedup(
 );
 
 // Pokud stejný obrázek (SHA1) již existuje:
-// - Vytvoří se jen nový MediaOwnerLink
+// - Vytvoří se jen nový MediaOwnerLink (pokud ještě neexistuje)
 // - Asset se znovu nezpracovává
 // - Ušetří se storage a čas
+// - Při opakovaném importu stejného ownera se nevytvářejí duplicitní linky
+```
+
+### 5. Bulk import z HTML stránky
+
+```php
+use MediaS3\Service\HtmlImageExtractor;
+use MediaS3\Service\MediaManager;
+
+// 1. Extrakce URL obrázků z HTML
+$extractor = $container->getByType(HtmlImageExtractor::class);
+
+// Výchozí patterny (fancybox, lightbox, data atributy)
+$urls = $extractor->extract($html, 'https://example.com');
+
+// Nebo vlastní patterny
+$urls = $extractor->extractWithPatterns($html, [
+    '/href="([^"]*\/photos\/[^"]+\.jpg)"/i',
+], 'https://example.com');
+
+// Nebo jen img src s filtrem cesty
+$urls = $extractor->extractImgSrc($html, 'https://example.com', '/gallery/');
+
+// 2. Bulk import s progress callbackem
+$result = $this->mediaManager->importFromUrls(
+    $this->em,
+    $urls,
+    'gallery',       // profile
+    '_',             // ownerType ('_' = flat struktura bez ownerType v S3 cestě)
+    $galleryId,      // ownerId
+    'photo',         // role
+    false,           // async (true = přes RabbitMQ)
+    function ($current, $total, $url, $asset, $error) {
+        if ($error) {
+            echo "[$current/$total] FAILED: $url - " . $error->getMessage() . "\n";
+        } else {
+            echo "[$current/$total] OK: $url\n";
+        }
+    }
+);
+
+// Výsledek
+echo "Imported: {$result['imported']}, Failed: {$result['failed']}\n";
+// $result['assets'] obsahuje pole importovaných MediaAsset objektů
+```
+
+### 6. Volitelný ownerType v S3 cestě
+
+```php
+// S ownerType = 'Product' (výchozí chování)
+// S3 cesta: gallery/Product/123/1/thumb.jpg
+
+// S ownerType = '_' nebo '' (flat struktura)
+// S3 cesta: gallery/123/1/thumb.jpg
+
+$asset = $this->mediaManager->uploadRemoteWithDedup(
+    $this->em, $url, 'gallery', '_', $galleryId, 'photo', 0
+);
 ```
 
 ## Získání obrázků v šabloně
@@ -481,10 +539,17 @@ foreach ($urls as $url => $productId) {
 uploadLocal(em, upload, profile, ownerType, ownerId, role, sort): object  // Returns MediaAsset (or custom entity)
 uploadLocalWithDedup(...): object
 uploadRemote(em, url, profile, ownerType, ownerId, role, sort): object
-uploadRemoteWithDedup(...): object
+uploadRemoteWithDedup(...): object   // + kontrola duplicitního linku
 enqueueRemote(em, url, profile, ownerType, ownerId, role, sort): object
+enqueueRemoteWithDedup(...): object  // + kontrola duplicitního linku
+importFromUrls(em, urls, profile, ownerType, ownerId, role, async, onProgress): array  // Bulk import
 deleteAsset(em, assetId): void
 findDuplicateBySha1(em, sha1): ?object
+
+// HtmlImageExtractor
+extract(html, baseUrl): string[]                           // Výchozí patterny (fancybox, lightbox...)
+extractWithPatterns(html, patterns, baseUrl): string[]     // Vlastní regex patterny
+extractImgSrc(html, baseUrl, pathFilter): string[]         // Jen <img src="...">
 
 // MediaAsset
 getId(): int
