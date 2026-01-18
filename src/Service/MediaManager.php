@@ -359,8 +359,15 @@ final class MediaManager
 
     private function baseKey(string $prefix, string $ownerType, int $ownerId, int $assetId): string
     {
-        $safeOwnerType = preg_replace('~[^A-Za-z0-9_\-]~', '_', $ownerType) ?: 'Owner';
-        return rtrim($prefix, '/') . '/' . $safeOwnerType . '/' . $ownerId . '/' . $assetId;
+        $base = rtrim($prefix, '/');
+
+        // If ownerType is empty or "_", skip it in the path
+        if ($ownerType !== '' && $ownerType !== '_') {
+            $safeOwnerType = preg_replace('~[^A-Za-z0-9_\-]~', '_', $ownerType) ?: 'Owner';
+            $base .= '/' . $safeOwnerType;
+        }
+
+        return $base . '/' . $ownerId . '/' . $assetId;
     }
 
     private function validateImageBytes(string $bytes): void
@@ -724,6 +731,21 @@ final class MediaManager
         $existing = $this->findDuplicateBySha1($em, $sha1);
 
         if ($existing !== null) {
+            // Check if link already exists for this owner+asset combination
+            $existingLink = $em->getRepository($this->mediaOwnerLinkClass)->findOneBy([
+                'ownerType' => $ownerType,
+                'ownerId' => $ownerId,
+                'asset' => $existing,
+            ]);
+
+            if ($existingLink !== null) {
+                $this->logger->info('Asset and link already exist (skipped)', [
+                    'existingAssetId' => $existing->getId(),
+                    'sha1' => $sha1,
+                ]);
+                return $existing;
+            }
+
             $this->logger->info('Reusing existing asset (dedup)', [
                 'existingAssetId' => $existing->getId(),
                 'sha1' => $sha1,
@@ -781,6 +803,21 @@ final class MediaManager
         $existing = $this->findDuplicateBySha1($em, $sha1);
 
         if ($existing !== null) {
+            // Check if link already exists for this owner+asset combination
+            $existingLink = $em->getRepository($this->mediaOwnerLinkClass)->findOneBy([
+                'ownerType' => $ownerType,
+                'ownerId' => $ownerId,
+                'asset' => $existing,
+            ]);
+
+            if ($existingLink !== null) {
+                $this->logger->info('Asset and link already exist (skipped)', [
+                    'existingAssetId' => $existing->getId(),
+                    'sha1' => $sha1,
+                ]);
+                return $existing;
+            }
+
             $this->logger->info('Reusing existing asset (async dedup)', [
                 'existingAssetId' => $existing->getId(),
                 'sha1' => $sha1,
