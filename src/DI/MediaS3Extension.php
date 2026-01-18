@@ -3,6 +3,7 @@
 namespace MediaS3\DI;
 
 use MediaS3\Command\CleanupFailedAssetsCommand;
+use MediaS3\Service\HtmlImageExtractor;
 use MediaS3\Service\HttpDownloader;
 use MediaS3\Service\ImageProcessorGd;
 use MediaS3\Service\MediaManager;
@@ -123,6 +124,9 @@ final class MediaS3Extension extends CompilerExtension
                 null, // logger
                 (array) $cfg->entities, // entity class names
             ]);
+
+        $builder->addDefinition($this->prefix('htmlImageExtractor'))
+            ->setFactory(HtmlImageExtractor::class);
 
         // Console command pro cleanup selhaných assetů
         $builder->addDefinition($this->prefix('cleanupFailedAssetsCommand'))

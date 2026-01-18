@@ -1063,4 +1063,73 @@ final class MediaManager
 
         return $count;
     }
+
+    /**
+     * Bulk import images from array of URLs with deduplication
+     *
+     * @param EntityManagerInterface $em Entity manager
+     * @param string[] $urls Array of image URLs to import
+     * @param string $profile Media profile to use
+     * @param string $ownerType Owner type (use "_" for flat structure)
+     * @param int $ownerId Owner ID
+     * @param string $role Link role (default: 'gallery')
+     * @param bool $async Use async processing via RabbitMQ (default: false)
+     * @param callable|null $onProgress Progress callback: function(int $current, int $total, string $url, ?object $asset, ?\Throwable $error): void
+     * @return array{imported: int, skipped: int, failed: int, assets: object[]}
+     */
+    public function importFromUrls(
+        EntityManagerInterface $em,
+        array $urls,
+        string $profile,
+        string $ownerType,
+        int $ownerId,
+        string $role = 'gallery',
+        bool $async = false,
+        ?callable $onProgress = null
+    ): array {
+        $result = [
+            'imported' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+            'assets' => [],
+        ];
+
+        $total = count($urls);
+
+        foreach ($urls as $index => $url) {
+            try {
+                if ($async) {
+                    $asset = $this->enqueueRemoteWithDedup($em, $url, $profile, $ownerType, $ownerId, $role, $index);
+                } else {
+                    $asset = $this->uploadRemoteWithDedup($em, $url, $profile, $ownerType, $ownerId, $role, $index);
+                }
+
+                $result['assets'][] = $asset;
+                $result['imported']++;
+
+                if ($onProgress !== null) {
+                    $onProgress($index + 1, $total, $url, $asset, null);
+                }
+            } catch (\Throwable $e) {
+                $result['failed']++;
+
+                $this->logger->warning('Failed to import image', [
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+
+                if ($onProgress !== null) {
+                    $onProgress($index + 1, $total, $url, null, $e);
+                }
+            }
+        }
+
+        $this->logger->info('Bulk import completed', [
+            'total' => $total,
+            'imported' => $result['imported'],
+            'failed' => $result['failed'],
+        ]);
+
+        return $result;
+    }
 }
